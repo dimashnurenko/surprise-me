@@ -1,13 +1,17 @@
 """The LangGraph gift-selection graph.
 
-Two nodes wired in sequence:
+Four nodes wired in sequence:
 
-    search  ->  select
+    search  ->  select  ->  purchase  ->  fulfillment
 
 * ``search`` runs the Product Search Agent prompt with a ``search_products``
   tool-use loop and gathers de-duplicated candidate products.
 * ``select`` runs the Gift Selection Agent prompt over those candidates and
   parses the specified JSON decision.
+* ``purchase`` issues a scoped card and hands checkout to the partner, which
+  processes and settles the transaction.
+* ``fulfillment`` persists the resulting order's details in the store, keyed by
+  user id, so they can be looked up later via the HTTP API.
 
 The state is a plain :class:`TypedDict`; :func:`run_agent` is a thin convenience
 wrapper for callers (e.g. the HTTP API) that just want the final decision.
@@ -28,7 +32,7 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 from langgraph.graph import END, START, StateGraph
 
-from . import prompts
+from . import prompts, store
 from .tools import SEARCH_TOOL_NAME, run_purchase, run_search_tool, search_tool_schema
 
 load_dotenv()
@@ -92,6 +96,8 @@ class GiftState(TypedDict, total=False):
     selection: dict[str, Any]
     # Produced by the purchase node
     purchase: dict[str, Any]
+    # Produced by the fulfillment node
+    fulfillment: dict[str, Any]
 
 
 # --------------------------------------------------------------------------------------
@@ -257,6 +263,55 @@ def purchase_node(state: GiftState) -> GiftState:
     return {"purchase": {"product_id": order["product_id"], **result}}
 
 
+def fulfillment_node(state: GiftState) -> GiftState:
+    """Persist the completed order's details in the store, keyed by user id.
+
+    Reads the order the partner returned from the purchase node's checkout result
+    (``purchase.checkout.order``) and saves it under the user id so it can be looked
+    up later via the HTTP API. If the purchase didn't produce a confirmed order
+    (skipped, error, or no order in the checkout result), it records why and stores
+    nothing.
+    """
+    purchase = state.get("purchase") or {}
+    order = ((purchase.get("checkout") or {}).get("order")) or {}
+    if not order:
+        logger.info(
+            "[fulfillment] no order to store (purchase status=%s)",
+            purchase.get("status"),
+        )
+        return {
+            "fulfillment": {
+                "status": "skipped",
+                "reason": f"no confirmed order (purchase status is {purchase.get('status')!r})",
+            }
+        }
+
+    user_id = _user_id(state)
+    if not user_id:
+        logger.warning("[fulfillment] USER_ID is not set; cannot store order")
+        return {"fulfillment": {"status": "skipped", "reason": "USER_ID is not set"}}
+
+    store.save_order(user_id, order)
+    logger.info(
+        "[fulfillment] node finished: stored order %s for user %s",
+        order.get("order_id"),
+        user_id,
+    )
+    return {
+        "fulfillment": {
+            "status": "stored",
+            "user_id": user_id,
+            "order_id": order.get("order_id"),
+        }
+    }
+
+
+def _user_id(state: GiftState) -> str | None:
+    """The user id to store the order under, from the profile or the USER_ID env."""
+    profile = state.get("user_profile") or {}
+    return profile.get("user_id") or os.environ.get("USER_ID")
+
+
 def _resolve_order(
     selection: dict[str, Any], candidates: list[dict[str, Any]]
 ) -> dict[str, Any] | None:
@@ -312,15 +367,17 @@ def _parse_json(text: str) -> dict[str, Any]:
 # --------------------------------------------------------------------------------------
 @lru_cache(maxsize=1)
 def build_graph():
-    """Compile and cache the search -> select -> purchase graph."""
+    """Compile and cache the search -> select -> purchase -> fulfillment graph."""
     graph = StateGraph(GiftState)
     graph.add_node("search", search_node)
     graph.add_node("select", select_node)
     graph.add_node("purchase", purchase_node)
+    graph.add_node("fulfillment", fulfillment_node)
     graph.add_edge(START, "search")
     graph.add_edge("search", "select")
     graph.add_edge("select", "purchase")
-    graph.add_edge("purchase", END)
+    graph.add_edge("purchase", "fulfillment")
+    graph.add_edge("fulfillment", END)
     return graph.compile()
 
 
