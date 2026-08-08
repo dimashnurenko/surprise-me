@@ -93,8 +93,8 @@ def choose_gift(request: GiftRequest) -> GiftResponse:
     )
     return GiftResponse(
         selection=result.get("selection", {}),
-        candidates=result.get("search_results", []),
-        search_calls=result.get("search_calls", []),
+        candidates=[],
+        search_calls=[],
     )
 
 
