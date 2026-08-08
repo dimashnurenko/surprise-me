@@ -6,8 +6,10 @@ path. Infrastructure chatter (MCP round-trips, Rain/partner HTTP request and
 response bodies, store writes) is deliberately kept off this INFO view and left
 at ``DEBUG`` so the flow reads top-to-bottom like a story.
 
-Format uses capital letters and rule lines so the important boundaries — a new
-run, a new node — stand out at a glance.
+Each boundary is a single line so it sits cleanly next to the log prefix
+(``timestamp LEVEL [gift_agent]``) instead of trailing ragged, unprefixed
+rule lines. A label is centred inside a rule of box-drawing characters so a
+new run or node stands out at a glance while staying one line tall.
 """
 
 from __future__ import annotations
@@ -16,31 +18,38 @@ import logging
 
 logger = logging.getLogger("gift_agent")
 
-_WIDTH = 70
+_WIDTH = 60
+
+
+def _banner(label: str, fill: str) -> str:
+    """A single-line rule with ``label`` centred inside it."""
+    text = f" {label.upper()} "
+    pad = max(_WIDTH - len(text), 2)
+    left = pad // 2
+    right = pad - left
+    return f"{fill * left}{text}{fill * right}"
 
 
 def run(title: str) -> None:
     """Heavy banner marking the start/finish of a whole agent run."""
-    rule = "=" * _WIDTH
-    logger.info("%s\n  %s\n%s", rule, title.upper(), rule)
+    logger.info(_banner(f"RUN · {title}", "═"))
 
 
 def node(name: str) -> None:
     """Banner marking a graph node being invoked."""
-    rule = "-" * _WIDTH
-    logger.info("%s\n  NODE  >  %s\n%s", rule, name.upper(), rule)
+    logger.info(_banner(f"NODE · {name}", "─"))
 
 
 def llm(label: str) -> None:
     """A single Claude/LLM call within the current node."""
-    logger.info("      * LLM  >  %s", label.upper())
+    logger.info("   ◆ LLM · %s", label.upper())
 
 
 def step(message: str) -> None:
     """A single flow fact — ids are enough on the happy path."""
-    logger.info("      - %s", message)
+    logger.info("   · %s", message)
 
 
 def warn(message: str) -> None:
     """A flow problem that isn't fatal (e.g. nothing to do, missing config)."""
-    logger.warning("      ! %s", message)
+    logger.warning("   ! %s", message)
