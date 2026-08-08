@@ -17,11 +17,10 @@
         Body:
           {
             "amount_in_usd_cents": 4299,                 # card spend limit, required
-            "session_id": "...",                         # plaintext, encrypted server-side
-            "encrypted_session_id": "...",               # OR a pre-encrypted sessionid
             "user_id": "..."                             # defaults to USER_ID env
           }
-        Issues a single-use scoped card via the Rain issuing API.
+        Issues a single-use scoped card via the Rain issuing API. A fresh
+        session id is generated server-side for every request.
 
 Run with:  python -m gift_agent.api   (or: uvicorn gift_agent.api:app)
 """
@@ -85,12 +84,6 @@ class FundCardResponse(BaseModel):
 class ScopedCardRequest(BaseModel):
     amount_in_usd_cents: int = Field(
         ..., gt=0, description="Card spend limit in US cents (e.g. 4299 = $42.99)."
-    )
-    session_id: Optional[str] = Field(
-        None, description="Plaintext session id; encrypted server-side into the sessionid header."
-    )
-    encrypted_session_id: Optional[str] = Field(
-        None, description="Pre-encrypted sessionid header value (alternative to session_id)."
     )
     user_id: Optional[str] = Field(
         None, description="Rain user id. Defaults to the USER_ID environment variable."
@@ -188,8 +181,6 @@ def issue_scoped_card(request: ScopedCardRequest) -> ScopedCardResponse:
     try:
         result = cards.issue_scoped_card(
             amount_in_usd_cents=request.amount_in_usd_cents,
-            session_id=request.session_id,
-            encrypted_session_id=request.encrypted_session_id,
             user_id=request.user_id,
         )
     except ValueError as exc:
