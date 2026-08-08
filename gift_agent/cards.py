@@ -86,7 +86,7 @@ def issue_scoped_card(
     if allowed_mccs:
         payload["allowedMccs"] = allowed_mccs
 
-    logger.info(
+    logger.debug(
         "[rain] POST scoped card (user=%s, amount=%d cents, mccs=%s)",
         user_id,
         amount_in_usd_cents,
@@ -102,7 +102,7 @@ def issue_scoped_card(
         json=payload,
         timeout=timeout,
     )
-    logger.info(
+    logger.debug(
         "[rain] scoped card response: %d %s", response.status_code, response.text
     )
     response.raise_for_status()
@@ -153,7 +153,7 @@ def authorize_transaction(
     if decline_reason:
         payload["declineReason"] = decline_reason
 
-    logger.info(
+    logger.debug(
         "[rain] POST authorize (card=%s, amount=%d cents, mcc=%s, decline=%s)",
         card_id,
         amount,
@@ -166,7 +166,7 @@ def authorize_transaction(
         json=payload,
         timeout=timeout,
     )
-    logger.info(
+    logger.debug(
         "[rain] authorize response: %d %s", response.status_code, response.text
     )
     response.raise_for_status()
@@ -202,7 +202,7 @@ def settle_transaction(
     if amount is not None:
         payload["amount"] = amount
 
-    logger.info(
+    logger.debug(
         "[rain] POST settle (transaction=%s, amount=%s)",
         transaction_id,
         amount if amount is not None else "<original>",
@@ -213,7 +213,7 @@ def settle_transaction(
         json=payload,
         timeout=timeout,
     )
-    logger.info(
+    logger.debug(
         "[rain] settle response: %d %s", response.status_code, response.text
     )
     response.raise_for_status()

@@ -31,7 +31,7 @@ def save_order(user_id: str, order: dict[str, Any]) -> None:
     Each order is stored as its own record so a user can accumulate many orders.
     """
     _db.insert({"user_id": user_id, "order": order})
-    logger.info(
+    logger.debug(
         "[store] saved order %s for user %s",
         order.get("order_id", "<no id>"),
         user_id,
