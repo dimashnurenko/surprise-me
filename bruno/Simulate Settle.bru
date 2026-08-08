@@ -1,0 +1,28 @@
+meta {
+  name: Simulate Settle
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/v1/simulate/transactions/f3a1c92e-1b3d-4d1e-bb22-12c0a4d5b8f9/settle
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "amount": 5000
+  }
+}
+
+docs {
+  Settle an existing authorized transaction via the Rain simulate API. The server
+  reads the API key from its environment (`API_KEY`) and forwards it as the
+  `Api-Key` header; the tenant scope is resolved from that key. The `amount` field
+  is optional — omit it to settle for the original authorization amount.
+}
