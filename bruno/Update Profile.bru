@@ -1,0 +1,61 @@
+meta {
+  name: Update Profile
+  type: http
+  seq: 5
+}
+
+put {
+  url: {{baseUrl}}/profile
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "profile": {
+      "user": {
+        "first_name": "Alex",
+        "last_name": "Rivera",
+        "date_of_birth": "1994-03-22"
+      },
+      "gift_profile": {
+        "interests": ["cooking", "gardening", "vinyl records"],
+        "avoid": ["alcohol", "candles", "novelty gag gifts"],
+        "brands_liked": ["OXO", "Sonos"],
+        "sizes": {
+          "shirt": "M",
+          "shoe": "US 10"
+        },
+        "price_taste": "mid",
+        "notes": "Prefers useful/experiential gifts over decorative ones. Has a small apartment, so avoid anything bulky."
+      },
+      "budget": {
+        "monthly_cap_usd": 20,
+        "per_gift_max_usd": 20,
+        "frequency": "one_per_month"
+      },
+      "delivery": {
+        "shipping_address": {
+          "line1": "221B Baker Street",
+          "city": "New York",
+          "state": "NY",
+          "zip": "10001",
+          "country": "US"
+        }
+      }
+    }
+  }
+}
+
+docs {
+  Overwrite the stored profile for the current user (hardcoded to the server's
+  `USER_ID` environment variable). Send the complete profile document under
+  `profile` — it fully replaces any previously stored profile. Subsequent
+  `POST /agent/gift` runs use this profile, so editing it changes the results.
+  The example body swaps the interests to demo how profile changes affect the
+  gift the agent picks.
+}

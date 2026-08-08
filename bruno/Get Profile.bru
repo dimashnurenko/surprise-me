@@ -1,0 +1,17 @@
+meta {
+  name: Get Profile
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/profile
+  auth: none
+}
+
+docs {
+  Return the profile for the current user (hardcoded to the server's `USER_ID`
+  environment variable). Returns the profile stored via `PUT /profile`
+  (`source: "stored"`) if present, otherwise falls back to `user_profile.json`
+  (`source: "default"`).
+}

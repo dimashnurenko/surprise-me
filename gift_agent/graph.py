@@ -32,7 +32,7 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 from langgraph.graph import END, START, StateGraph
 
-from . import flowlog, prompts, store
+from . import flowlog, profile_store, prompts, store
 from .tools import SEARCH_TOOL_NAME, run_purchase, run_search_tool, search_tool_schema
 
 load_dotenv()
@@ -112,7 +112,7 @@ def search_node(state: GiftState) -> GiftState:
     """Run the search agent: it maps the profile onto catalog filters, calls the
     ``search_products`` tool (possibly several times) and we collect the candidates."""
     flowlog.node("search")
-    system = prompts.search_system_prompt(state["user_profile"], state["current_date"])
+    system = prompts.search_system_prompt(_profile(state), state["current_date"])
     tools = [search_tool_schema()]
     messages: list[dict[str, Any]] = [
         {
@@ -176,7 +176,7 @@ def select_node(state: GiftState) -> GiftState:
     flowlog.node("select")
     flowlog.step(f"{len(candidates)} candidate(s) to choose from")
     system = prompts.gift_selection_system_prompt(
-        state["user_profile"],
+        _profile(state),
         candidates,
         state["current_date"],
     )
@@ -229,7 +229,7 @@ def purchase_node(state: GiftState) -> GiftState:
             }
         }
 
-    shipping_address = _shipping_address(state.get("user_profile", {}))
+    shipping_address = _shipping_address(_profile(state))
     flowlog.step(
         f"buying {order['product_id']} (${order['amount'] / 100:.2f} from {order['merchant_name']})"
     )
@@ -301,10 +301,24 @@ def _selection_notes(selection: dict[str, Any]) -> str:
     return str((selection.get("selected_product") or {}).get("reasoning") or "").strip()
 
 
+def _profile(state: GiftState) -> dict[str, Any]:
+    """Always read the current user profile from the database.
+
+    Every place that consumes the profile (both system prompts, the shipping
+    address, the order's user id) goes through here, so a profile edited via
+    ``PUT /profile`` immediately changes the agent's behavior. Falls back to the
+    seed ``user_profile.json`` when nothing is stored for the user yet.
+    """
+    return profile_store.load_profile(_user_id(state))
+
+
 def _user_id(state: GiftState) -> str | None:
-    """The user id to store the order under, from the profile or the USER_ID env."""
-    profile = state.get("user_profile") or {}
-    return profile.get("user_id") or os.environ.get("USER_ID")
+    """The user id to key the profile / order on, from the USER_ID env.
+
+    Falls back to any ``user_id`` seeded on the incoming state profile, but the
+    ``USER_ID`` environment variable is the canonical source used by the HTTP API.
+    """
+    return os.environ.get("USER_ID") or (state.get("user_profile") or {}).get("user_id")
 
 
 def _resolve_order(
@@ -376,17 +390,17 @@ def build_graph():
     return graph.compile()
 
 
-def run_agent(
-    user_profile: dict[str, Any],
-    current_date: str | None = None,
-) -> GiftState:
+def run_agent(current_date: str | None = None) -> GiftState:
     """Run the full graph and return the final state (selection + purchase + candidates).
 
-    After the select node chooses a gift, the purchase node buys it: it creates a
-    scoped card sized to the gift, then authorizes and settles the payment.
+    The user profile is always read from the database (keyed by ``USER_ID``,
+    falling back to the seed ``user_profile.json``), so profile edits made via
+    ``PUT /profile`` change the agent's behavior. After the select node chooses a
+    gift, the purchase node buys it: it creates a scoped card sized to the gift,
+    then authorizes and settles the payment.
     """
     state: GiftState = {
-        "user_profile": user_profile,
+        "user_profile": profile_store.load_profile(os.environ.get("USER_ID")),
         "current_date": current_date or date.today().isoformat(),
     }
     flowlog.run(f"gift agent run started  (current_date={state['current_date']})")
