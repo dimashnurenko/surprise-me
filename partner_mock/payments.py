@@ -96,7 +96,9 @@ def authorize_transaction(
         json=payload,
         timeout=timeout,
     )
-    logger.info("[payments] authorize response: %d", response.status_code)
+    logger.info(
+        "[payments] authorize response: %d %s", response.status_code, response.text
+    )
     response.raise_for_status()
     try:
         return response.json()
@@ -140,7 +142,9 @@ def settle_transaction(
         json=payload,
         timeout=timeout,
     )
-    logger.info("[payments] settle response: %d", response.status_code)
+    logger.info(
+        "[payments] settle response: %d %s", response.status_code, response.text
+    )
     response.raise_for_status()
     try:
         return response.json()

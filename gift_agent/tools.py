@@ -103,7 +103,9 @@ def run_search_tool(
     query = _search_query_params(params)
     logger.info("[search] GET %s (q=%r)", _PARTNER_SEARCH_URL, params.q)
     response = httpx.get(_PARTNER_SEARCH_URL, params=query, timeout=timeout)
-    logger.info("[search] partner search response: %d", response.status_code)
+    logger.info(
+        "[search] partner search response: %d %s", response.status_code, response.text
+    )
     response.raise_for_status()
     return response.json()
 
@@ -170,7 +172,11 @@ def run_purchase(
         amount,
     )
     response = httpx.post(_PARTNER_CHECKOUT_URL, json=checkout_body, timeout=timeout)
-    logger.info("[purchase] partner checkout response: %d", response.status_code)
+    logger.info(
+        "[purchase] partner checkout response: %d %s",
+        response.status_code,
+        response.text,
+    )
     response.raise_for_status()
     try:
         checkout_result = response.json()
