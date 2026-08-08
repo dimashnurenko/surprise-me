@@ -17,7 +17,8 @@
         Body:
           {
             "amount_in_usd_cents": 4299,                 # card spend limit, required
-            "user_id": "..."                             # defaults to USER_ID env
+            "user_id": "...",                            # defaults to USER_ID env
+            "allowed_mccs": ["5411", "5812"]             # optional MCC restriction
           }
         Issues a single-use scoped card via the Rain issuing API. A fresh
         session id is generated server-side for every request.
@@ -87,6 +88,10 @@ class ScopedCardRequest(BaseModel):
     )
     user_id: Optional[str] = Field(
         None, description="Rain user id. Defaults to the USER_ID environment variable."
+    )
+    allowed_mccs: Optional[list[str]] = Field(
+        None,
+        description='Optional merchant category codes to restrict the card to, e.g. ["5411", "5812"].',
     )
 
 
@@ -181,6 +186,7 @@ def issue_scoped_card(request: ScopedCardRequest) -> ScopedCardResponse:
     try:
         result = cards.issue_scoped_card(
             amount_in_usd_cents=request.amount_in_usd_cents,
+            allowed_mccs=request.allowed_mccs,
             user_id=request.user_id,
         )
     except ValueError as exc:
