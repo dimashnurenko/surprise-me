@@ -42,9 +42,9 @@ if not logging.getLogger().handlers and not logger.handlers:
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     )
 
-# The partner search core resolves its DB from PARTNER_DB_PATH. When that isn't set
-# (and the module's stale default doesn't exist), fall back to the DB committed in the
-# repo so the agent works out of the box.
+# The partner search core resolves its DB from PARTNER_DB_PATH, defaulting to the DB
+# committed alongside partner_mock. Point at that same file explicitly so the agent
+# works out of the box regardless of the current working directory.
 _REPO_DB = Path(__file__).resolve().parent.parent / "partner_mock" / "partner_web_site_db.json"
 if not os.environ.get("PARTNER_DB_PATH") and _REPO_DB.exists():
     os.environ["PARTNER_DB_PATH"] = str(_REPO_DB)

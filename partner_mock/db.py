@@ -15,15 +15,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-# Default location of the mock DB. Resolved relative to the repo root so it works
-# regardless of the current working directory. Override with PARTNER_DB_PATH.
-_DEFAULT_DB_PATH = (
-    Path(__file__).resolve().parent.parent
-    / ".context"
-    / "attachments"
-    / "khs51I"
-    / "partner_web_site_db.json"
-)
+# Default location of the mock DB. Resolved relative to this package so it works
+# regardless of the current working directory (the JSON is committed alongside this
+# module). Override with PARTNER_DB_PATH.
+_DEFAULT_DB_PATH = Path(__file__).resolve().parent / "partner_web_site_db.json"
 
 
 def db_path() -> Path:
