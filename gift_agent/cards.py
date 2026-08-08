@@ -8,15 +8,17 @@ single-use "scoped" card for a fixed dollar amount:
         sessionid: <ENCRYPTED_SESSION_ID>
         { "amountInUSDCents": 4299 }
 
-The ``sessionid`` header must be an *encrypted* session id. Callers can either
-pass a plaintext ``session_id`` (encrypted here with the RSA public key in
-``SESSION_ID_CRYPTO_PUBLIC_KEY``) or a pre-encrypted ``encrypted_session_id``.
+The ``sessionid`` header must be an *encrypted* session id. Callers can pass a
+plaintext ``session_id`` (encrypted here with the RSA public key in
+``SESSION_ID_CRYPTO_PUBLIC_KEY``) or a pre-encrypted ``encrypted_session_id``;
+if neither is supplied, :func:`generate_session_id` mints a fresh one.
 """
 
 from __future__ import annotations
 
 import base64
 import os
+import time
 from typing import Any, Optional
 
 import httpx
@@ -28,6 +30,16 @@ _SCOPED_CARD_URL = os.environ.get(
     "RAIN_SCOPED_CARD_URL",
     "https://api-dev.raincards.xyz/v1/issuing/users/{user_id}/cards/scoped",
 )
+
+
+def generate_session_id() -> str:
+    """Generate a fresh plaintext session id for the ``sessionid`` header.
+
+    Rain expects the (encrypted) session id to be the current Unix time in
+    milliseconds so it can reject stale/replayed requests. Returning it as a
+    string keeps :func:`encrypt_session_id` happy.
+    """
+    return str(int(time.time() * 1000))
 
 
 def encrypt_session_id(session_id: str, public_key_pem: Optional[str] = None) -> str:
@@ -61,7 +73,8 @@ def issue_scoped_card(
 
     ``user_id`` and ``api_key`` default to the ``USER_ID`` / ``API_KEY``
     environment variables. Provide either ``session_id`` (encrypted here) or an
-    already-encrypted ``encrypted_session_id``.
+    already-encrypted ``encrypted_session_id``; if neither is given, a fresh
+    session id is generated via :func:`generate_session_id`.
 
     Raises ``ValueError`` for missing configuration and ``httpx.HTTPStatusError``
     if Rain returns a non-2xx status.
@@ -74,9 +87,7 @@ def issue_scoped_card(
         raise ValueError("USER_ID is not set.")
 
     if encrypted_session_id is None:
-        if not session_id:
-            raise ValueError("Provide either session_id or encrypted_session_id.")
-        encrypted_session_id = encrypt_session_id(session_id)
+        encrypted_session_id = encrypt_session_id(session_id or generate_session_id())
 
     response = httpx.post(
         _SCOPED_CARD_URL.format(user_id=user_id),

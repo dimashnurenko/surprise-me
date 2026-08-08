@@ -16,15 +16,16 @@ headers {
 
 body:json {
   {
-    "amount_in_usd_cents": 4299,
-    "session_id": "replace-with-plaintext-session-id"
+    "amount_in_usd_cents": 4299
   }
 }
 
 docs {
   Issue a single-use scoped card via the Rain issuing API. The server reads the
   API key and user id from its environment (`API_KEY` / `USER_ID`) and encrypts
-  the plaintext `session_id` into the `sessionid` header using
-  `SESSION_ID_CRYPTO_PUBLIC_KEY`. Alternatively, pass `encrypted_session_id` with
-  an already-encrypted value instead of `session_id`.
+  a plaintext session id into the `sessionid` header using
+  `SESSION_ID_CRYPTO_PUBLIC_KEY`. If the request omits `session_id`, the server
+  auto-generates a fresh one (current Unix time in ms). You may still pass a
+  plaintext `session_id`, or `encrypted_session_id` with an already-encrypted
+  value, to override.
 }
