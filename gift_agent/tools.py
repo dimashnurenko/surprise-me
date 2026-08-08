@@ -1,9 +1,9 @@
 """The ``search_products`` tool exposed to the search agent.
 
 The tool schema is derived from :class:`partner_mock.models.SearchParams` so it
-stays in sync with the real search core, and execution delegates straight to
-:func:`partner_mock.search.search_products` — the same function the HTTP/MCP
-transports use, so the agent sees the identical envelope.
+stays in sync with the real search core, and execution issues an HTTP request to
+the partner's REST search endpoint — the same envelope the HTTP/MCP transports
+return, so the agent's catalog lookups behave like a real third-party call.
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ from typing import Any, Optional
 
 import httpx
 
-from partner_mock import search
 from partner_mock.models import SearchParams
 
 from . import cards
@@ -22,6 +21,12 @@ from . import cards
 logger = logging.getLogger("gift_agent")
 
 SEARCH_TOOL_NAME = "search_products"
+
+# The partner's catalog search endpoint. Overridable for staging/prod. We hit it
+# over HTTP so the agent's search behaves like a real third-party call.
+_PARTNER_SEARCH_URL = os.environ.get(
+    "PARTNER_SEARCH_URL", "http://127.0.0.1:8000/api/products/search"
+)
 
 # The partner's checkout endpoint. Overridable for staging/prod. Card *issuing*
 # stays on our side; the partner *processes and settles* the transaction.
@@ -46,10 +51,61 @@ def search_tool_schema() -> dict[str, Any]:
     }
 
 
-def run_search_tool(tool_input: dict[str, Any]) -> dict[str, Any]:
-    """Execute a ``search_products`` tool call and return the search envelope."""
+def _search_query_params(params: SearchParams) -> dict[str, Any]:
+    """Serialize ``SearchParams`` into the query params the REST endpoint expects.
+
+    List fields are sent as repeated params (the endpoint accepts either repeated
+    or comma-separated), optional scalars are omitted when unset, and the tri-state
+    ``in_stock`` is encoded as ``true``/``false``/``any``.
+    """
+    query: dict[str, Any] = {
+        "match_all_tags": str(params.match_all_tags).lower(),
+        "sort": params.sort.value,
+        "page": params.page,
+        "page_size": params.page_size,
+    }
+    if params.q:
+        query["q"] = params.q
+    for key in (
+        "categories",
+        "tags",
+        "exclude_terms",
+        "brands",
+        "merchant_ids",
+        "payment_methods",
+        "accepted_tokens",
+        "chains",
+    ):
+        values = getattr(params, key)
+        if values:
+            query[key] = values
+    if params.min_price is not None:
+        query["min_price"] = params.min_price
+    if params.max_price is not None:
+        query["max_price"] = params.max_price
+    query["in_stock"] = (
+        "any" if params.in_stock is None else str(params.in_stock).lower()
+    )
+    return query
+
+
+def run_search_tool(
+    tool_input: dict[str, Any], timeout: float = 30.0
+) -> dict[str, Any]:
+    """Execute a ``search_products`` tool call and return the search envelope.
+
+    Rather than calling the search core in-process, this hits the partner's REST
+    search endpoint over HTTP, so the agent's catalog lookups behave like a real
+    third-party request. Raises ``httpx.HTTPStatusError`` if the partner returns a
+    non-2xx status.
+    """
     params = SearchParams(**tool_input)
-    return search.search_products(params)
+    query = _search_query_params(params)
+    logger.info("[search] GET %s (q=%r)", _PARTNER_SEARCH_URL, params.q)
+    response = httpx.get(_PARTNER_SEARCH_URL, params=query, timeout=timeout)
+    logger.info("[search] partner search response: %d", response.status_code)
+    response.raise_for_status()
+    return response.json()
 
 
 def run_purchase(
