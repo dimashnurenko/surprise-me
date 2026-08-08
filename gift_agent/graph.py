@@ -16,6 +16,7 @@ wrapper for callers (e.g. the HTTP API) that just want the final decision.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import date
 from functools import lru_cache
@@ -30,6 +31,15 @@ from . import prompts
 from .tools import SEARCH_TOOL_NAME, run_search_tool, search_tool_schema
 
 load_dotenv()
+
+logger = logging.getLogger("gift_agent")
+if not logging.getLogger().handlers and not logger.handlers:
+    # Provide a sensible default so the flow logs show up in the console even when
+    # the app hasn't configured logging (e.g. running the module directly).
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    )
 
 # The partner search core resolves its DB from PARTNER_DB_PATH. When that isn't set
 # (and the module's stale default doesn't exist), fall back to the DB committed in the
@@ -69,6 +79,7 @@ class GiftState(TypedDict, total=False):
 def search_node(state: GiftState) -> GiftState:
     """Run the search agent: it maps the profile onto catalog filters, calls the
     ``search_products`` tool (possibly several times) and we collect the candidates."""
+    logger.info("[search] node started (current_date=%s)", state.get("current_date"))
     system = prompts.search_system_prompt(state["user_profile"], state["current_date"])
     tools = [search_tool_schema()]
     messages: list[dict[str, Any]] = [
@@ -85,7 +96,8 @@ def search_node(state: GiftState) -> GiftState:
     candidates: dict[str, dict[str, Any]] = {}
     search_calls: list[dict[str, Any]] = []
 
-    for _ in range(MAX_SEARCH_STEPS):
+    for step in range(MAX_SEARCH_STEPS):
+        logger.info("[search] LLM step %d/%d", step + 1, MAX_SEARCH_STEPS)
         response = _client().messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
@@ -97,17 +109,27 @@ def search_node(state: GiftState) -> GiftState:
 
         tool_uses = [block for block in response.content if block.type == "tool_use"]
         if not tool_uses:
+            logger.info("[search] no more tool calls; stopping loop at step %d", step + 1)
             break
 
         tool_results: list[dict[str, Any]] = []
         for block in tool_uses:
             if block.name == SEARCH_TOOL_NAME:
+                logger.info("[search] calling %s with %s", SEARCH_TOOL_NAME, block.input)
                 envelope = run_search_tool(block.input)
-                search_calls.append({"input": block.input, "total": envelope["pagination"]["total_results"]})
+                total = envelope["pagination"]["total_results"]
+                search_calls.append({"input": block.input, "total": total})
                 for product in envelope.get("results", []):
                     candidates[product["id"]] = product
+                logger.info(
+                    "[search] tool returned %d results (%d total, %d unique candidates so far)",
+                    len(envelope.get("results", [])),
+                    total,
+                    len(candidates),
+                )
                 payload = envelope
             else:
+                logger.warning("[search] model requested unknown tool: %s", block.name)
                 payload = {"error": "unknown_tool", "tool": block.name}
             tool_results.append(
                 {
@@ -118,14 +140,21 @@ def search_node(state: GiftState) -> GiftState:
             )
         messages.append({"role": "user", "content": tool_results})
 
+    logger.info(
+        "[search] node finished: %d unique candidates from %d search call(s)",
+        len(candidates),
+        len(search_calls),
+    )
     return {"search_results": list(candidates.values()), "search_calls": search_calls}
 
 
 def select_node(state: GiftState) -> GiftState:
     """Run the gift-selection agent over the gathered candidates and parse its JSON."""
+    candidates = state.get("search_results", [])
+    logger.info("[select] node started with %d candidate(s)", len(candidates))
     system = prompts.gift_selection_system_prompt(
         state["user_profile"],
-        state.get("search_results", []),
+        candidates,
         state["current_date"],
     )
     response = _client().messages.create(
@@ -140,7 +169,12 @@ def select_node(state: GiftState) -> GiftState:
         ],
     )
     text = "".join(block.text for block in response.content if block.type == "text").strip()
-    return {"selection": _parse_json(text)}
+    selection = _parse_json(text)
+    logger.info(
+        "[select] node finished: selected %s",
+        selection.get("product_id") or selection.get("id") or selection,
+    )
+    return {"selection": selection}
 
 
 def _parse_json(text: str) -> dict[str, Any]:
@@ -184,4 +218,11 @@ def run_agent(
         "user_profile": user_profile,
         "current_date": current_date or date.today().isoformat(),
     }
-    return build_graph().invoke(state)
+    logger.info("[graph] run_agent started (current_date=%s)", state["current_date"])
+    result = build_graph().invoke(state)
+    logger.info(
+        "[graph] run_agent finished: %d candidates, selection=%s",
+        len(result.get("search_results", [])),
+        bool(result.get("selection")),
+    )
+    return result
