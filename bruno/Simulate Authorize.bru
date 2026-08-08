@@ -1,0 +1,33 @@
+meta {
+  name: Simulate Authorize
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/v1/simulate/transactions/authorize
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "cardId": "a7f2c5b1-9e8d-4c3a-bb22-12c0a4d5b8f9",
+    "amount": 5000,
+    "currency": "USD",
+    "merchantName": "Coffee Shop",
+    "merchantCategoryCode": "5814"
+  }
+}
+
+docs {
+  Simulate a card authorization via the Rain simulate API. The server reads the
+  API key from its environment (`API_KEY`) and forwards it as the `Api-Key`
+  header; the tenant scope is resolved from that key. The card must be active
+  and belong to the calling tenant. Add an optional `declineReason` field to the
+  body to simulate a declined authorization.
+}
