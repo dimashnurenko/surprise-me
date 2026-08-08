@@ -32,7 +32,7 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 from langgraph.graph import END, START, StateGraph
 
-from . import prompts, store
+from . import flowlog, prompts, store
 from .tools import SEARCH_TOOL_NAME, run_purchase, run_search_tool, search_tool_schema
 
 load_dotenv()
@@ -106,7 +106,7 @@ class GiftState(TypedDict, total=False):
 def search_node(state: GiftState) -> GiftState:
     """Run the search agent: it maps the profile onto catalog filters, calls the
     ``search_products`` tool (possibly several times) and we collect the candidates."""
-    logger.info("[search] node started (current_date=%s)", state.get("current_date"))
+    flowlog.node("search")
     system = prompts.search_system_prompt(state["user_profile"], state["current_date"])
     tools = [search_tool_schema()]
     messages: list[dict[str, Any]] = [
@@ -124,7 +124,7 @@ def search_node(state: GiftState) -> GiftState:
     search_calls: list[dict[str, Any]] = []
 
     for step in range(MAX_SEARCH_STEPS):
-        logger.info("[search] LLM step %d/%d", step + 1, MAX_SEARCH_STEPS)
+        flowlog.llm(f"search  (step {step + 1}/{MAX_SEARCH_STEPS})")
         response = _client().messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
@@ -136,27 +136,19 @@ def search_node(state: GiftState) -> GiftState:
 
         tool_uses = [block for block in response.content if block.type == "tool_use"]
         if not tool_uses:
-            logger.info("[search] no more tool calls; stopping loop at step %d", step + 1)
             break
 
         tool_results: list[dict[str, Any]] = []
         for block in tool_uses:
             if block.name == SEARCH_TOOL_NAME:
-                logger.info("[search] calling %s with %s", SEARCH_TOOL_NAME, block.input)
                 envelope = run_search_tool(block.input)
                 total = envelope["pagination"]["total_results"]
                 search_calls.append({"input": block.input, "total": total})
                 for product in envelope.get("results", []):
                     candidates[product["id"]] = product
-                logger.info(
-                    "[search] tool returned %d results (%d total, %d unique candidates so far)",
-                    len(envelope.get("results", [])),
-                    total,
-                    len(candidates),
-                )
                 payload = envelope
             else:
-                logger.warning("[search] model requested unknown tool: %s", block.name)
+                flowlog.warn(f"model requested unknown tool: {block.name}")
                 payload = {"error": "unknown_tool", "tool": block.name}
             tool_results.append(
                 {
@@ -167,10 +159,8 @@ def search_node(state: GiftState) -> GiftState:
             )
         messages.append({"role": "user", "content": tool_results})
 
-    logger.info(
-        "[search] node finished: %d unique candidates from %d search call(s)",
-        len(candidates),
-        len(search_calls),
+    flowlog.step(
+        f"{len(candidates)} candidate(s) from {len(search_calls)} search call(s)"
     )
     return {"search_results": list(candidates.values()), "search_calls": search_calls}
 
@@ -178,12 +168,14 @@ def search_node(state: GiftState) -> GiftState:
 def select_node(state: GiftState) -> GiftState:
     """Run the gift-selection agent over the gathered candidates and parse its JSON."""
     candidates = state.get("search_results", [])
-    logger.info("[select] node started with %d candidate(s)", len(candidates))
+    flowlog.node("select")
+    flowlog.step(f"{len(candidates)} candidate(s) to choose from")
     system = prompts.gift_selection_system_prompt(
         state["user_profile"],
         candidates,
         state["current_date"],
     )
+    flowlog.llm("select")
     response = _client().messages.create(
         model=MODEL,
         max_tokens=MAX_TOKENS,
@@ -197,9 +189,8 @@ def select_node(state: GiftState) -> GiftState:
     )
     text = "".join(block.text for block in response.content if block.type == "text").strip()
     selection = _parse_json(text)
-    logger.info(
-        "[select] node finished: selected %s",
-        selection.get("product_id") or selection.get("id") or selection,
+    flowlog.step(
+        f"selected {(selection.get('selected_product') or {}).get('id') or selection.get('status')}"
     )
     return {"selection": selection}
 
@@ -216,15 +207,16 @@ def purchase_node(state: GiftState) -> GiftState:
     If nothing was selected (``status`` != ``"selected"``) or the product can't be
     resolved, it records why and buys nothing.
     """
+    flowlog.node("purchase")
     selection = state.get("selection", {})
     status = selection.get("status")
     if status != "selected":
-        logger.info("[purchase] nothing to buy (selection status=%s)", status)
+        flowlog.step(f"nothing to buy (selection status={status})")
         return {"purchase": {"status": "skipped", "reason": f"selection status is {status!r}"}}
 
     order = _resolve_order(selection, state.get("search_results", []))
     if order is None:
-        logger.warning("[purchase] could not resolve selected product to a candidate")
+        flowlog.warn("could not resolve selected product to a candidate")
         return {
             "purchase": {
                 "status": "skipped",
@@ -233,13 +225,8 @@ def purchase_node(state: GiftState) -> GiftState:
         }
 
     shipping_address = _shipping_address(state.get("user_profile", {}))
-    logger.info(
-        "[purchase] buying %s ($%.2f from %s, mcc=%s, ship_to=%s)",
-        order["product_id"],
-        order["amount"] / 100,
-        order["merchant_name"],
-        order["merchant_category_code"],
-        (shipping_address or {}).get("city") or "<no address>",
+    flowlog.step(
+        f"buying {order['product_id']} (${order['amount'] / 100:.2f} from {order['merchant_name']})"
     )
     try:
         result = run_purchase(
@@ -259,7 +246,7 @@ def purchase_node(state: GiftState) -> GiftState:
     except httpx.HTTPError as exc:
         result = {"status": "error", "error": "request_failed", "detail": str(exc)}
 
-    logger.info("[purchase] node finished: status=%s", result.get("status"))
+    flowlog.step(f"status={result.get('status')}, card_id={result.get('card_id')}")
     return {"purchase": {"product_id": order["product_id"], **result}}
 
 
@@ -273,13 +260,11 @@ def fulfillment_node(state: GiftState) -> GiftState:
     produce a confirmed order (skipped, error, or no order in the checkout result),
     it records why and stores nothing.
     """
+    flowlog.node("fulfillment")
     purchase = state.get("purchase") or {}
     order = ((purchase.get("checkout") or {}).get("order")) or {}
     if not order:
-        logger.info(
-            "[fulfillment] no order to store (purchase status=%s)",
-            purchase.get("status"),
-        )
+        flowlog.step(f"no order to store (purchase status={purchase.get('status')})")
         return {
             "fulfillment": {
                 "status": "skipped",
@@ -289,18 +274,14 @@ def fulfillment_node(state: GiftState) -> GiftState:
 
     user_id = _user_id(state)
     if not user_id:
-        logger.warning("[fulfillment] USER_ID is not set; cannot store order")
+        flowlog.warn("USER_ID is not set; cannot store order")
         return {"fulfillment": {"status": "skipped", "reason": "USER_ID is not set"}}
 
     # Record why this gift was chosen alongside the order. The selection agent's
     # `reasoning` is written to be shown to the user directly.
     order = {**order, "notes": _selection_notes(state.get("selection", {}))}
     store.save_order(user_id, order)
-    logger.info(
-        "[fulfillment] node finished: stored order %s for user %s",
-        order.get("order_id"),
-        user_id,
-    )
+    flowlog.step(f"stored order {order.get('order_id')} for user {user_id}")
     return {
         "fulfillment": {
             "status": "stored",
@@ -403,12 +384,12 @@ def run_agent(
         "user_profile": user_profile,
         "current_date": current_date or date.today().isoformat(),
     }
-    logger.info("[graph] run_agent started (current_date=%s)", state["current_date"])
+    flowlog.run(f"gift agent run started  (current_date={state['current_date']})")
     result = build_graph().invoke(state)
-    logger.info(
-        "[graph] run_agent finished: %d candidates, selection=%s, purchase=%s",
-        len(result.get("search_results", [])),
-        bool(result.get("selection")),
-        (result.get("purchase") or {}).get("status"),
+    flowlog.run("gift agent run finished")
+    flowlog.step(
+        f"{len(result.get('search_results', []))} candidate(s), "
+        f"purchase={(result.get('purchase') or {}).get('status')}, "
+        f"fulfillment={(result.get('fulfillment') or {}).get('status')}"
     )
     return result

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import os
 import threading
 from typing import Any, Callable, Coroutine, Optional, TypeVar
@@ -21,8 +20,6 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 from . import cards
-
-logger = logging.getLogger("gift_agent")
 
 SEARCH_TOOL_NAME = "search_products"
 
@@ -73,7 +70,6 @@ async def _discover_search_tool_schema() -> dict[str, Any]:
     Returns an Anthropic tool definition (``name``/``description``/``input_schema``)
     built from the schema the partner publishes over ``tools/list``.
     """
-    logger.info("[search] discovering tool schema via MCP %s", _PARTNER_MCP_URL)
     async with streamable_http_client(_PARTNER_MCP_URL) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
@@ -157,7 +153,6 @@ def run_search_tool(tool_input: dict[str, Any]) -> dict[str, Any]:
     conforms to the schema the partner published via :func:`search_tool_schema`.
     Raises ``RuntimeError`` if the partner is unreachable or reports a tool error.
     """
-    logger.info("[search] MCP call %s -> %s (q=%r)", _PARTNER_MCP_URL, SEARCH_TOOL_NAME, tool_input.get("q"))
     try:
         envelope = _run_async(lambda: _call_search_tool(tool_input))
     except RuntimeError:
@@ -166,8 +161,6 @@ def run_search_tool(tool_input: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError(
             f"Partner MCP search call to {_PARTNER_MCP_URL} failed: {exc}"
         ) from exc
-    total = envelope.get("pagination", {}).get("total_results")
-    logger.info("[search] partner MCP returned %s total result(s)", total)
     return envelope
 
 
@@ -198,24 +191,14 @@ def run_purchase(
     ``httpx.HTTPStatusError`` if the card API or the partner returns a non-2xx
     status.
     """
-    logger.info(
-        "[purchase] run_purchase started (amount=%d cents, merchant=%s, mcc=%s)",
-        amount,
-        merchant_name,
-        merchant_category_code,
-    )
-
     # 1. Our side: create a scoped card sized to (and locked to the MCC of) the gift.
-    logger.info("[purchase] step 1/2: issuing scoped card for %d cents", amount)
     card = cards.issue_scoped_card(
         amount_in_usd_cents=amount,
         allowed_mccs=[merchant_category_code] if merchant_category_code else None,
     )
     card_id = cards.extract_card_id(card)
     if not card_id:
-        logger.error("[purchase] step 1/2 failed: no card id in issue response")
         raise ValueError("Could not resolve the issued card id from the Rain response.")
-    logger.info("[purchase] step 1/2 done: card issued (card_id=%s)", card_id)
 
     # 2. Partner side: hand off checkout (transaction processing + settlement).
     checkout_body = {
@@ -226,29 +209,13 @@ def run_purchase(
         "merchantCategoryCode": merchant_category_code,
         "shippingAddress": shipping_address,
     }
-    logger.info(
-        "[purchase] step 2/2: POST %s (card=%s, amount=%d cents)",
-        _PARTNER_CHECKOUT_URL,
-        card_id,
-        amount,
-    )
     response = httpx.post(_PARTNER_CHECKOUT_URL, json=checkout_body, timeout=timeout)
-    logger.info(
-        "[purchase] partner checkout response: %d %s",
-        response.status_code,
-        response.text,
-    )
     response.raise_for_status()
     try:
         checkout_result = response.json()
     except ValueError:
         checkout_result = {"raw": response.text}
 
-    logger.info(
-        "[purchase] run_purchase finished: partner status=%s (card_id=%s)",
-        checkout_result.get("status"),
-        card_id,
-    )
     return {
         "status": checkout_result.get("status", "unknown"),
         "card_id": card_id,
