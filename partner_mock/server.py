@@ -10,18 +10,24 @@ Both delegate to :mod:`partner_mock.search`, so they return an identical envelop
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Optional
+
+import httpx
 
 try:  # mcp >= 2.0 renamed the high-level server class
     from mcp.server.mcpserver import MCPServer as _Server
 except ImportError:  # mcp 1.x
     from mcp.server.fastmcp import FastMCP as _Server
+from pydantic import ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from . import search
+from . import checkout, search
 from .models import SearchParams, SortOrder
+
+logger = logging.getLogger("partner_mock")
 
 mcp = _Server(
     name="partner-marketplace",
@@ -198,6 +204,46 @@ async def http_merchants(request: Request) -> JSONResponse:
 @mcp.custom_route("/api/catalog/facets", methods=["GET"])
 async def http_facets(request: Request) -> JSONResponse:
     return JSONResponse(search.catalog_facets())
+
+
+@mcp.custom_route("/api/checkout", methods=["POST"])
+async def http_checkout(request: Request) -> JSONResponse:
+    """Process a checkout: authorize + settle the charge and build the order.
+
+    Body (camelCase)::
+
+        {
+          "cardId": "a75df5f9-...",
+          "amount": 500,
+          "currency": "USD",
+          "merchantName": "Coffee Shop",
+          "merchantCategoryCode": "5814",
+          "shippingAddress": { "line1": "...", "city": "...", ... }
+        }
+    """
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "bad_request", "detail": "invalid JSON body"}, status_code=400)
+    try:
+        parsed = checkout.CheckoutRequest.model_validate(body)
+    except ValidationError as exc:
+        return JSONResponse({"error": "bad_request", "detail": exc.errors()}, status_code=400)
+
+    try:
+        result = checkout.process_order(parsed)
+    except ValueError as exc:
+        return JSONResponse({"error": "bad_request", "detail": str(exc)}, status_code=400)
+    except httpx.HTTPStatusError as exc:
+        logger.warning("[checkout] payment processor returned %d", exc.response.status_code)
+        return JSONResponse(
+            {"error": "payment_failed", "detail": exc.response.text},
+            status_code=502,
+        )
+    except httpx.HTTPError as exc:
+        return JSONResponse({"error": "payment_unreachable", "detail": str(exc)}, status_code=502)
+
+    return JSONResponse(result)
 
 
 @mcp.custom_route("/healthz", methods=["GET"])

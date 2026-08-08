@@ -9,7 +9,10 @@ transports use, so the agent sees the identical envelope.
 from __future__ import annotations
 
 import logging
-from typing import Any
+import os
+from typing import Any, Optional
+
+import httpx
 
 from partner_mock import search
 from partner_mock.models import SearchParams
@@ -19,6 +22,12 @@ from . import cards
 logger = logging.getLogger("gift_agent")
 
 SEARCH_TOOL_NAME = "search_products"
+
+# The partner's checkout endpoint. Overridable for staging/prod. Card *issuing*
+# stays on our side; the partner *processes and settles* the transaction.
+_PARTNER_CHECKOUT_URL = os.environ.get(
+    "PARTNER_CHECKOUT_URL", "http://127.0.0.1:8000/api/checkout"
+)
 
 
 def search_tool_schema() -> dict[str, Any]:
@@ -49,23 +58,26 @@ def run_purchase(
     merchant_name: str,
     merchant_category_code: str,
     currency: str = "USD",
+    shipping_address: Optional[dict[str, Any]] = None,
+    timeout: float = 30.0,
 ) -> dict[str, Any]:
-    """Buy a gift end-to-end: issue a scoped card, authorize, then settle.
+    """Buy a gift by issuing a scoped card and handing checkout to the partner.
 
     A plain function (not an agent tool) called by the purchase node after the
-    gift-selection agent has chosen a product. It performs three sequential
-    actions against the Rain API:
+    gift-selection agent has chosen a product. The work is split across the two
+    sides of the system:
 
-    1. **Create a scoped card** for exactly ``amount`` (USD cents), restricted to
-       ``merchant_category_code``.
-    2. **Authorize** ``amount`` on that card at ``merchant_name`` /
-       ``merchant_category_code``.
-    3. **Settle** the resulting transaction for the full authorized amount.
+    1. **Our side — issue a scoped card** for exactly ``amount`` (USD cents),
+       restricted to ``merchant_category_code``.
+    2. **Partner side — checkout** by POSTing the card, amount, merchant and the
+       shopper's ``shipping_address`` to the partner API, which processes the
+       transaction (authorize) and settles the order.
 
-    Returns an envelope with the issued card id, the transaction id and the raw
-    responses from each step. Raises ``ValueError`` for missing configuration or
-    if an id cannot be resolved, and ``httpx.HTTPStatusError`` if Rain returns a
-    non-2xx status.
+    Returns an envelope with the issued card id and the partner's checkout result
+    (order, authorization, settlement). Raises ``ValueError`` for missing
+    configuration or if the card id can't be resolved, and
+    ``httpx.HTTPStatusError`` if the card API or the partner returns a non-2xx
+    status.
     """
     logger.info(
         "[purchase] run_purchase started (amount=%d cents, merchant=%s, mcc=%s)",
@@ -74,52 +86,49 @@ def run_purchase(
         merchant_category_code,
     )
 
-    # 1. Create a scoped card sized to (and locked to the merchant category of) the gift.
-    logger.info("[purchase] step 1/3: issuing scoped card for %d cents", amount)
+    # 1. Our side: create a scoped card sized to (and locked to the MCC of) the gift.
+    logger.info("[purchase] step 1/2: issuing scoped card for %d cents", amount)
     card = cards.issue_scoped_card(
         amount_in_usd_cents=amount,
         allowed_mccs=[merchant_category_code] if merchant_category_code else None,
     )
     card_id = cards.extract_card_id(card)
     if not card_id:
-        logger.error("[purchase] step 1/3 failed: no card id in issue response")
+        logger.error("[purchase] step 1/2 failed: no card id in issue response")
         raise ValueError("Could not resolve the issued card id from the Rain response.")
-    logger.info("[purchase] step 1/3 done: card issued (card_id=%s)", card_id)
+    logger.info("[purchase] step 1/2 done: card issued (card_id=%s)", card_id)
 
-    # 2. Authorize the payment against the freshly issued card.
-    logger.info("[purchase] step 2/3: authorizing %d cents on card %s", amount, card_id)
-    authorization = cards.authorize_transaction(
-        card_id=card_id,
-        amount=amount,
-        merchant_name=merchant_name,
-        merchant_category_code=merchant_category_code,
-        currency=currency,
-    )
-    transaction_id = cards.extract_transaction_id(authorization)
-    if not transaction_id:
-        logger.error("[purchase] step 2/3 failed: no transaction id in authorize response")
-        raise ValueError("Could not resolve the transaction id from the authorize response.")
+    # 2. Partner side: hand off checkout (transaction processing + settlement).
+    checkout_body = {
+        "cardId": card_id,
+        "amount": amount,
+        "currency": currency,
+        "merchantName": merchant_name,
+        "merchantCategoryCode": merchant_category_code,
+        "shippingAddress": shipping_address,
+    }
     logger.info(
-        "[purchase] step 2/3 done: authorized (transaction_id=%s)", transaction_id
-    )
-
-    # 3. Settle the payment for the full authorized amount.
-    logger.info(
-        "[purchase] step 3/3: settling transaction %s for %d cents", transaction_id, amount
-    )
-    settlement = cards.settle_transaction(transaction_id=transaction_id, amount=amount)
-    logger.info("[purchase] step 3/3 done: transaction %s settled", transaction_id)
-
-    logger.info(
-        "[purchase] run_purchase finished: settled (card_id=%s, transaction_id=%s)",
+        "[purchase] step 2/2: POST %s (card=%s, amount=%d cents)",
+        _PARTNER_CHECKOUT_URL,
         card_id,
-        transaction_id,
+        amount,
+    )
+    response = httpx.post(_PARTNER_CHECKOUT_URL, json=checkout_body, timeout=timeout)
+    logger.info("[purchase] partner checkout response: %d", response.status_code)
+    response.raise_for_status()
+    try:
+        checkout_result = response.json()
+    except ValueError:
+        checkout_result = {"raw": response.text}
+
+    logger.info(
+        "[purchase] run_purchase finished: partner status=%s (card_id=%s)",
+        checkout_result.get("status"),
+        card_id,
     )
     return {
-        "status": "settled",
+        "status": checkout_result.get("status", "unknown"),
         "card_id": card_id,
-        "transaction_id": transaction_id,
         "card": card,
-        "authorization": authorization,
-        "settlement": settlement,
+        "checkout": checkout_result,
     }

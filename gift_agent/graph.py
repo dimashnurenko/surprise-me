@@ -203,8 +203,9 @@ def purchase_node(state: GiftState) -> GiftState:
 
     Treats the selection as an *order*: it resolves the chosen product back to the
     search candidate (which carries the price and merchant), extracts the purchase
-    parameters, and hands them to :func:`gift_agent.tools.run_purchase`, which
-    creates a scoped card, authorizes and settles the payment.
+    parameters and the shopper's shipping address, and hands them to
+    :func:`gift_agent.tools.run_purchase`, which issues a scoped card on our side
+    and then calls the partner to process and settle the transaction.
 
     If nothing was selected (``status`` != ``"selected"``) or the product can't be
     resolved, it records why and buys nothing.
@@ -225,26 +226,29 @@ def purchase_node(state: GiftState) -> GiftState:
             }
         }
 
+    shipping_address = _shipping_address(state.get("user_profile", {}))
     logger.info(
-        "[purchase] buying %s ($%.2f from %s, mcc=%s)",
+        "[purchase] buying %s ($%.2f from %s, mcc=%s, ship_to=%s)",
         order["product_id"],
         order["amount"] / 100,
         order["merchant_name"],
         order["merchant_category_code"],
+        (shipping_address or {}).get("city") or "<no address>",
     )
     try:
         result = run_purchase(
             amount=order["amount"],
             merchant_name=order["merchant_name"],
             merchant_category_code=order["merchant_category_code"],
+            shipping_address=shipping_address,
         )
     except ValueError as exc:
         result = {"status": "error", "error": "invalid_input", "detail": str(exc)}
     except httpx.HTTPStatusError as exc:
         result = {
             "status": "error",
-            "error": "rain_api_error",
-            "detail": f"Rain API returned {exc.response.status_code}: {exc.response.text}",
+            "error": "http_error",
+            "detail": f"{exc.request.url} returned {exc.response.status_code}: {exc.response.text}",
         }
     except httpx.HTTPError as exc:
         result = {"status": "error", "error": "request_failed", "detail": str(exc)}
@@ -278,6 +282,12 @@ def _resolve_order(
         "merchant_name": merchant.get("name") or "Unknown Merchant",
         "merchant_category_code": mcc,
     }
+
+
+def _shipping_address(user_profile: dict[str, Any]) -> dict[str, Any] | None:
+    """Pull the shipping address out of the user profile (``delivery.shipping_address``)."""
+    address = (user_profile.get("delivery") or {}).get("shipping_address")
+    return address if isinstance(address, dict) else None
 
 
 def _parse_json(text: str) -> dict[str, Any]:

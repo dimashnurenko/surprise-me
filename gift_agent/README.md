@@ -17,11 +17,17 @@ START ──▶ search ──▶ select ──▶ purchase ──▶ END
   (`prompts/gift_selection_agent_system_prompt.md`) over those candidates and returns
   the exact JSON decision specified in that prompt. This agent does not call tools.
 - **`purchase`** — takes the selection as an order, resolves the chosen product back to
-  its search candidate (for price + merchant), and calls `gift_agent.tools.run_purchase`,
-  a plain function that buys the gift in three steps: **(1)** issue a scoped card sized to
-  the gift, **(2)** authorize the payment, **(3)** settle it. The result (issued card id,
-  transaction id, and raw responses) is returned under `purchase`. If nothing was selected
-  it buys nothing.
+  its search candidate (for price + merchant) and reads the shopper's shipping address
+  from the profile (`delivery.shipping_address`), then calls `gift_agent.tools.run_purchase`.
+  The work is **split across the two sides**: our side **(1)** issues a scoped card sized to
+  the gift, then the **partner** checkout API (`POST /api/checkout`) **(2)** processes the
+  transaction (authorize) and **(3)** settles the order, building + logging an order JSON.
+  The result (issued card id + the partner's checkout response) is returned under `purchase`.
+  If nothing was selected it buys nothing.
+
+  The partner endpoint is configurable via `PARTNER_CHECKOUT_URL` (default
+  `http://127.0.0.1:8000/api/checkout`), so the partner server (`python -m partner_mock.server`)
+  must be running for the purchase step to reach it.
 
 ## Setup
 

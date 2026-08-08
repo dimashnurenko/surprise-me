@@ -7,9 +7,9 @@
             "current_date": "2026-08-08"                 # defaults to today
           }
         Returns the selection JSON plus the resulting "purchase" envelope. After
-        the select step chooses a gift, the purchase node buys it end-to-end:
-        it issues a scoped card sized to the gift, then authorizes and settles
-        the payment.
+        the select step chooses a gift, the purchase node buys it: our side issues
+        a scoped card sized to the gift, then the partner checkout API processes
+        the transaction and settles the order.
 
     POST /card/fund
         Body:

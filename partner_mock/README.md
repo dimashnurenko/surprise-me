@@ -35,7 +35,27 @@ Everything is served on one host/port (same domain for the demo):
 | REST: product detail | `GET /api/products/{id}` |
 | REST: merchants | `GET /api/merchants` |
 | REST: catalog facets | `GET /api/catalog/facets` |
+| REST: checkout | `POST /api/checkout` |
 | Health | `GET /healthz` |
+
+### Checkout
+
+`POST /api/checkout` processes a transaction and settles the order for a scoped
+card the buyer platform already issued. It authorizes the card through the payment
+processor (`partner_mock.payments`, the Rain simulate API), settles the amount, then
+builds an order JSON (including the shipping address) and **logs it** — nothing is
+persisted yet. Body:
+
+```jsonc
+{
+  "cardId": "a75df5f9-aba4-42cd-9471-4f0f726d8275",
+  "amount": 500,                       // USD cents
+  "currency": "USD",
+  "merchantName": "Coffee Shop",
+  "merchantCategoryCode": "5814",
+  "shippingAddress": { "line1": "221B Baker Street", "city": "New York", "state": "NY", "zip": "10001", "country": "US" }
+}
+```
 
 ## Search parameters
 

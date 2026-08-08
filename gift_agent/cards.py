@@ -240,8 +240,3 @@ def _extract_id(response: dict[str, Any], keys: tuple[str, ...]) -> Optional[str
 def extract_card_id(response: dict[str, Any]) -> Optional[str]:
     """Pull the issued card id out of a scoped-card response."""
     return _extract_id(response, ("cardId", "card_id", "id"))
-
-
-def extract_transaction_id(response: dict[str, Any]) -> Optional[str]:
-    """Pull the transaction id out of an authorize response."""
-    return _extract_id(response, ("transactionId", "transaction_id", "id"))
