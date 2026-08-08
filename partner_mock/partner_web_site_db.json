@@ -1,0 +1,270 @@
+{
+  "merchants": [
+    {
+      "id": "m_bluebottle",
+      "name": "Blue Bottle Coffee",
+      "payment_methods": ["crypto"],
+      "accepted_tokens": ["USDC"],
+      "wallet_address": "0xA1b2C3d4E5f6789012345678901234567890AbCd",
+      "chain": "monad"
+    },
+    {
+      "id": "m_rapha",
+      "name": "Rapha Cycling",
+      "payment_methods": ["fiat_card"],
+      "accepted_tokens": [],
+      "wallet_address": null,
+      "chain": null
+    },
+    {
+      "id": "m_penguin",
+      "name": "Penguin Classics Store",
+      "payment_methods": ["fiat_card"],
+      "accepted_tokens": [],
+      "wallet_address": null,
+      "chain": null
+    },
+    {
+      "id": "m_boardgamegeek",
+      "name": "Board Game Vault",
+      "payment_methods": ["crypto"],
+      "accepted_tokens": ["USDC"],
+      "wallet_address": "0xB2c3D4e5F60789012345678901234567890BcDe1",
+      "chain": "monad"
+    },
+    {
+      "id": "m_generic_giftcard",
+      "name": "CryptoGift Reseller",
+      "payment_methods": ["crypto"],
+      "accepted_tokens": ["USDC"],
+      "wallet_address": "0xC3d4E5f6078901234567890123456789A0CdEf12",
+      "chain": "monad"
+    },
+    {
+      "id": "m_moma_design",
+      "name": "MoMA Design Store",
+      "payment_methods": ["fiat_card"],
+      "accepted_tokens": [],
+      "wallet_address": null,
+      "chain": null
+    },
+    {
+      "id": "m_novelty_shop",
+      "name": "Prank & Party Novelty Co.",
+      "payment_methods": ["fiat_card"],
+      "accepted_tokens": [],
+      "wallet_address": null,
+      "chain": null
+    },
+    {
+      "id": "m_craft_spirits",
+      "name": "Craft Spirits Delivery",
+      "payment_methods": ["crypto"],
+      "accepted_tokens": ["USDC"],
+      "wallet_address": "0xD4e5F60789012345678901234567890A0BcDe123",
+      "chain": "monad"
+    }
+  ],
+  "products": [
+    {
+      "id": "p001",
+      "name": "Blue Bottle Single-Origin Coffee Subscription (1 month)",
+      "merchant_id": "m_bluebottle",
+      "category": "coffee",
+      "tags": ["specialty coffee", "consumable", "experiential"],
+      "price_usd": 32,
+      "in_stock": true,
+      "description": "Rotating single-origin beans delivered fresh, one bag per month."
+    },
+    {
+      "id": "p002",
+      "name": "Blue Bottle Pour-Over Dripper Set",
+      "merchant_id": "m_bluebottle",
+      "category": "coffee",
+      "tags": ["specialty coffee", "gear"],
+      "price_usd": 45,
+      "in_stock": true,
+      "description": "Ceramic dripper + 20 filters, compact for small kitchens."
+    },
+    {
+      "id": "p003",
+      "name": "Rapha Brevet Cycling Cap",
+      "merchant_id": "m_rapha",
+      "category": "cycling",
+      "tags": ["cycling", "apparel", "small item"],
+      "price_usd": 30,
+      "in_stock": true,
+      "description": "Lightweight cotton cap, packs flat, one size."
+    },
+    {
+      "id": "p004",
+      "name": "Rapha Merino Cycling Socks (2-pack)",
+      "merchant_id": "m_rapha",
+      "category": "cycling",
+      "tags": ["cycling", "apparel"],
+      "price_usd": 28,
+      "in_stock": true,
+      "description": "Merino wool blend, size M available."
+    },
+    {
+      "id": "p005",
+      "name": "Rapha City Bike Bag - Small",
+      "merchant_id": "m_rapha",
+      "category": "cycling",
+      "tags": ["cycling", "gear", "compact"],
+      "price_usd": 58,
+      "in_stock": true,
+      "description": "Slim saddle bag, fits under seat, doesn't take up apartment space."
+    },
+    {
+      "id": "p006",
+      "name": "Penguin Classics Box Set - Golden Age Sci-Fi",
+      "merchant_id": "m_penguin",
+      "category": "books",
+      "tags": ["sci-fi", "books", "collectible"],
+      "price_usd": 54,
+      "in_stock": true,
+      "description": "5-volume clothbound set, foundational sci-fi novels."
+    },
+    {
+      "id": "p007",
+      "name": "Penguin Classics - Dune (Clothbound Edition)",
+      "merchant_id": "m_penguin",
+      "category": "books",
+      "tags": ["sci-fi", "books"],
+      "price_usd": 22,
+      "in_stock": true,
+      "description": "Single hardcover clothbound edition."
+    },
+    {
+      "id": "p008",
+      "name": "Board Game Vault - Wingspan (Standalone)",
+      "merchant_id": "m_boardgamegeek",
+      "category": "board games",
+      "tags": ["board games", "strategy"],
+      "price_usd": 55,
+      "in_stock": true,
+      "description": "Compact strategy game, 1-5 players, small box footprint."
+    },
+    {
+      "id": "p009",
+      "name": "Board Game Vault - Azul",
+      "merchant_id": "m_boardgamegeek",
+      "category": "board games",
+      "tags": ["board games", "strategy"],
+      "price_usd": 38,
+      "in_stock": true,
+      "description": "Tile-placement game, quick to learn, 2-4 players."
+    },
+    {
+      "id": "p010",
+      "name": "Board Game Vault - Codenames",
+      "merchant_id": "m_boardgamegeek",
+      "category": "board games",
+      "tags": ["board games", "party", "compact"],
+      "price_usd": 20,
+      "in_stock": true,
+      "description": "Word-guessing party game, small box, plays 4-8."
+    },
+    {
+      "id": "p011",
+      "name": "CryptoGift - $50 Experience Gift Card (Cycling Tours)",
+      "merchant_id": "m_generic_giftcard",
+      "category": "experiential",
+      "tags": ["cycling", "experiential", "gift card"],
+      "price_usd": 50,
+      "in_stock": true,
+      "description": "Redeemable for guided city cycling tours in major US cities."
+    },
+    {
+      "id": "p012",
+      "name": "MoMA Design Store - Minimalist Desk Organizer",
+      "merchant_id": "m_moma_design",
+      "category": "home",
+      "tags": ["design", "compact", "practical"],
+      "price_usd": 40,
+      "in_stock": true,
+      "description": "Small-footprint aluminum desk tray, fits tight spaces."
+    },
+    {
+      "id": "p013",
+      "name": "MoMA Design Store - Foldable Reading Light",
+      "merchant_id": "m_moma_design",
+      "category": "home",
+      "tags": ["reading", "compact", "practical"],
+      "price_usd": 35,
+      "in_stock": true,
+      "description": "Book-adjacent LED light, folds flat for small apartments."
+    },
+    {
+      "id": "p014",
+      "name": "Rapha Splurge - Merino Base Layer Jacket",
+      "merchant_id": "m_rapha",
+      "category": "cycling",
+      "tags": ["cycling", "apparel", "splurge"],
+      "price_usd": 145,
+      "in_stock": true,
+      "description": "Premium cold-weather cycling jacket. Above standard monthly cap — reserved for birthday-tier gifts."
+    },
+    {
+      "id": "p015",
+      "name": "Penguin Classics Complete Le Guin Sci-Fi Collection",
+      "merchant_id": "m_penguin",
+      "category": "books",
+      "tags": ["sci-fi", "books", "splurge"],
+      "price_usd": 120,
+      "in_stock": true,
+      "description": "8-volume collectible set. Above standard monthly cap — reserved for birthday-tier gifts."
+    },
+    {
+      "id": "p016",
+      "name": "Whoopee Cushion Deluxe Gift Set",
+      "merchant_id": "m_novelty_shop",
+      "category": "novelty",
+      "tags": ["novelty", "gag gift"],
+      "price_usd": 15,
+      "in_stock": true,
+      "description": "Should be filtered out — matches 'novelty gag gifts' in avoid list."
+    },
+    {
+      "id": "p017",
+      "name": "Prank Fart Spray 3-Pack",
+      "merchant_id": "m_novelty_shop",
+      "category": "novelty",
+      "tags": ["novelty", "gag gift"],
+      "price_usd": 12,
+      "in_stock": true,
+      "description": "Should be filtered out — matches 'novelty gag gifts' in avoid list."
+    },
+    {
+      "id": "p018",
+      "name": "Small-Batch Bourbon, 750ml",
+      "merchant_id": "m_craft_spirits",
+      "category": "alcohol",
+      "tags": ["alcohol"],
+      "price_usd": 48,
+      "in_stock": true,
+      "description": "Should be filtered out — matches 'alcohol' in avoid list."
+    },
+    {
+      "id": "p019",
+      "name": "Craft Beer Tasting Flight (6-pack)",
+      "merchant_id": "m_craft_spirits",
+      "category": "alcohol",
+      "tags": ["alcohol"],
+      "price_usd": 34,
+      "in_stock": true,
+      "description": "Should be filtered out — matches 'alcohol' in avoid list."
+    },
+    {
+      "id": "p020",
+      "name": "Hand-Poured Soy Candle, Cedar & Amber",
+      "merchant_id": "m_moma_design",
+      "category": "home",
+      "tags": ["candles", "home"],
+      "price_usd": 26,
+      "in_stock": true,
+      "description": "Should be filtered out — matches 'candles' in avoid list."
+    }
+  ]
+}
