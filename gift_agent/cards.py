@@ -8,22 +8,20 @@ single-use "scoped" card for a fixed dollar amount:
         sessionid: <ENCRYPTED_SESSION_ID>
         { "amountInUSDCents": 4299 }
 
-The ``sessionid`` header must be an *encrypted* session id. Callers can pass a
-plaintext ``session_id`` (encrypted here with the RSA public key in
-``SESSION_ID_CRYPTO_PUBLIC_KEY``) or a pre-encrypted ``encrypted_session_id``;
-if neither is supplied, :func:`generate_session_id` mints a fresh one.
+The ``sessionid`` header must be an *encrypted* session id. A fresh one is
+minted (and encrypted with the RSA public key in
+``SESSION_ID_CRYPTO_PUBLIC_KEY``) on every call via
+:func:`crypto.crypto.generate_session_id`.
 """
 
 from __future__ import annotations
 
-import base64
 import os
-import time
 from typing import Any, Optional
 
 import httpx
-from cryptography.hazmat.primitives.asymmetric import padding
-from cryptography.hazmat.primitives.serialization import load_pem_public_key
+
+from crypto.crypto import generate_session_id
 
 # Endpoint template. Overridable for staging/prod; ``{user_id}`` is filled in.
 _SCOPED_CARD_URL = os.environ.get(
@@ -32,39 +30,9 @@ _SCOPED_CARD_URL = os.environ.get(
 )
 
 
-def generate_session_id() -> str:
-    """Generate a fresh plaintext session id for the ``sessionid`` header.
-
-    Rain expects the (encrypted) session id to be the current Unix time in
-    milliseconds so it can reject stale/replayed requests. Returning it as a
-    string keeps :func:`encrypt_session_id` happy.
-    """
-    return str(int(time.time() * 1000))
-
-
-def encrypt_session_id(session_id: str, public_key_pem: Optional[str] = None) -> str:
-    """RSA-encrypt a plaintext session id into the ``sessionid`` header value.
-
-    Uses ``SESSION_ID_CRYPTO_PUBLIC_KEY`` (a PEM public key) unless a key is
-    passed explicitly, and returns the ciphertext base64-encoded.
-    """
-    pem = public_key_pem if public_key_pem is not None else os.environ.get(
-        "SESSION_ID_CRYPTO_PUBLIC_KEY"
-    )
-    if not pem:
-        raise ValueError("SESSION_ID_CRYPTO_PUBLIC_KEY is not set.")
-    # Tolerate keys stored with escaped newlines (e.g. single-line .env values).
-    pem = pem.replace("\\n", "\n")
-    public_key = load_pem_public_key(pem.encode("utf-8"))
-    ciphertext = public_key.encrypt(session_id.encode("utf-8"), padding.PKCS1v15())
-    return base64.b64encode(ciphertext).decode("ascii")
-
-
 def issue_scoped_card(
     *,
     amount_in_usd_cents: int,
-    session_id: Optional[str] = None,
-    encrypted_session_id: Optional[str] = None,
     user_id: Optional[str] = None,
     api_key: Optional[str] = None,
     timeout: float = 30.0,
@@ -72,9 +40,8 @@ def issue_scoped_card(
     """Issue a scoped card for ``amount_in_usd_cents`` and return the Rain response.
 
     ``user_id`` and ``api_key`` default to the ``USER_ID`` / ``API_KEY``
-    environment variables. Provide either ``session_id`` (encrypted here) or an
-    already-encrypted ``encrypted_session_id``; if neither is given, a fresh
-    session id is generated via :func:`generate_session_id`.
+    environment variables. A fresh (encrypted) session id is minted internally
+    via :func:`crypto.crypto.generate_session_id` for every request.
 
     Raises ``ValueError`` for missing configuration and ``httpx.HTTPStatusError``
     if Rain returns a non-2xx status.
@@ -86,8 +53,7 @@ def issue_scoped_card(
     if not user_id:
         raise ValueError("USER_ID is not set.")
 
-    if encrypted_session_id is None:
-        encrypted_session_id = encrypt_session_id(session_id or generate_session_id())
+    encrypted_session_id = generate_session_id()["sessionId"]
 
     response = httpx.post(
         _SCOPED_CARD_URL.format(user_id=user_id),
