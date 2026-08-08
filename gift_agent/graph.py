@@ -46,6 +46,11 @@ if not logging.getLogger().handlers and not logger.handlers:
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     )
 
+# Silence the chatty per-request logs from the HTTP/MCP client plumbing; they drown
+# out the flow logs. WARNING keeps genuine problems visible.
+for _noisy in ("httpx", "httpx2", "mcp.client.streamable_http", "mcp"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 # The partner search core resolves its DB from PARTNER_DB_PATH, defaulting to the DB
 # committed alongside partner_mock. Point at that same file explicitly so the agent
 # works out of the box regardless of the current working directory.
