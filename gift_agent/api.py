@@ -19,6 +19,7 @@ Run with:  python -m gift_agent.api   (or: uvicorn gift_agent.api:app)
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import date
 from pathlib import Path
@@ -29,6 +30,8 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from .graph import run_agent
+
+logger = logging.getLogger("gift_agent.api")
 
 # The Rain "simulate collateral fund" endpoint. Overridable for staging/prod.
 _FUND_URL = os.environ.get(
@@ -78,7 +81,16 @@ def choose_gift(request: GiftRequest) -> GiftResponse:
     """Run the search -> select graph and return the chosen gift."""
     profile = request.user_profile or _default_profile()
     current_date = request.current_date or date.today().isoformat()
+    logger.info(
+        "POST /agent/gift (custom_profile=%s, current_date=%s)",
+        request.user_profile is not None,
+        current_date,
+    )
     result = run_agent(profile, current_date)
+    logger.info(
+        "POST /agent/gift done: %d candidate(s) returned",
+        len(result.get("search_results", [])),
+    )
     return GiftResponse(
         selection=result.get("selection", {}),
         candidates=result.get("search_results", []),
@@ -93,6 +105,7 @@ def fund_card(request: FundCardRequest) -> FundCardResponse:
     Reads the API key and contract id from the environment (``API_KEY`` /
     ``COLLATERAL_CONTRACT_ID``); the caller only supplies the amount.
     """
+    logger.info("POST /card/fund (amount=%s)", request.amount)
     api_key = os.environ.get("API_KEY")
     contract_id = os.environ.get("COLLATERAL_CONTRACT_ID")
     if not api_key:
@@ -116,6 +129,7 @@ def fund_card(request: FundCardRequest) -> FundCardResponse:
         raise HTTPException(status_code=502, detail=f"Rain API request failed: {exc}") from exc
 
     if response.status_code >= 400:
+        logger.warning("POST /card/fund: Rain API returned %d", response.status_code)
         raise HTTPException(
             status_code=502,
             detail=f"Rain API returned {response.status_code}: {response.text}",
@@ -125,6 +139,7 @@ def fund_card(request: FundCardRequest) -> FundCardResponse:
         result = response.json()
     except ValueError:
         result = {"raw": response.text}
+    logger.info("POST /card/fund done: Rain API responded %d", response.status_code)
     return FundCardResponse(result=result)
 
 
