@@ -23,12 +23,13 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, TypedDict
 
+import httpx
 from anthropic import Anthropic
 from dotenv import load_dotenv
 from langgraph.graph import END, START, StateGraph
 
 from . import prompts
-from .tools import SEARCH_TOOL_NAME, run_search_tool, search_tool_schema
+from .tools import SEARCH_TOOL_NAME, run_purchase, run_search_tool, search_tool_schema
 
 load_dotenv()
 
@@ -54,6 +55,24 @@ MAX_TOKENS = 2048
 # Cap the search agent's tool-use loop so a misbehaving model can't spin forever.
 MAX_SEARCH_STEPS = 6
 
+# Merchant category code used when the catalog doesn't carry one for a product.
+# 5947 = "gift, card, novelty and souvenir shops".
+DEFAULT_MERCHANT_CATEGORY_CODE = "5947"
+# Coarse category -> MCC mapping so the scoped card / authorization use a sensible code.
+_CATEGORY_MCC = {
+    "coffee": "5499",  # misc food stores
+    "cycling": "5940",  # bicycle shops
+    "books": "5942",  # book stores
+    "electronics": "5732",  # electronics stores
+    "home": "5719",  # misc home furnishings
+    "outdoors": "5941",  # sporting goods
+    "fitness": "5941",  # sporting goods
+    "beauty": "5977",  # cosmetic stores
+    "food": "5499",  # misc food stores
+    "fashion": "5651",  # family clothing
+    "apparel": "5651",  # family clothing
+}
+
 
 @lru_cache(maxsize=1)
 def _client() -> Anthropic:
@@ -71,6 +90,8 @@ class GiftState(TypedDict, total=False):
     search_calls: list[dict[str, Any]]
     # Produced by the select node
     selection: dict[str, Any]
+    # Produced by the purchase node
+    purchase: dict[str, Any]
 
 
 # --------------------------------------------------------------------------------------
@@ -177,6 +198,98 @@ def select_node(state: GiftState) -> GiftState:
     return {"selection": selection}
 
 
+def purchase_node(state: GiftState) -> GiftState:
+    """Buy the gift the select node chose.
+
+    Treats the selection as an *order*: it resolves the chosen product back to the
+    search candidate (which carries the price and merchant), extracts the purchase
+    parameters and the shopper's shipping address, and hands them to
+    :func:`gift_agent.tools.run_purchase`, which issues a scoped card on our side
+    and then calls the partner to process and settle the transaction.
+
+    If nothing was selected (``status`` != ``"selected"``) or the product can't be
+    resolved, it records why and buys nothing.
+    """
+    selection = state.get("selection", {})
+    status = selection.get("status")
+    if status != "selected":
+        logger.info("[purchase] nothing to buy (selection status=%s)", status)
+        return {"purchase": {"status": "skipped", "reason": f"selection status is {status!r}"}}
+
+    order = _resolve_order(selection, state.get("search_results", []))
+    if order is None:
+        logger.warning("[purchase] could not resolve selected product to a candidate")
+        return {
+            "purchase": {
+                "status": "skipped",
+                "reason": "selected product not found among search candidates",
+            }
+        }
+
+    shipping_address = _shipping_address(state.get("user_profile", {}))
+    logger.info(
+        "[purchase] buying %s ($%.2f from %s, mcc=%s, ship_to=%s)",
+        order["product_id"],
+        order["amount"] / 100,
+        order["merchant_name"],
+        order["merchant_category_code"],
+        (shipping_address or {}).get("city") or "<no address>",
+    )
+    try:
+        result = run_purchase(
+            amount=order["amount"],
+            merchant_name=order["merchant_name"],
+            merchant_category_code=order["merchant_category_code"],
+            shipping_address=shipping_address,
+        )
+    except ValueError as exc:
+        result = {"status": "error", "error": "invalid_input", "detail": str(exc)}
+    except httpx.HTTPStatusError as exc:
+        result = {
+            "status": "error",
+            "error": "http_error",
+            "detail": f"{exc.request.url} returned {exc.response.status_code}: {exc.response.text}",
+        }
+    except httpx.HTTPError as exc:
+        result = {"status": "error", "error": "request_failed", "detail": str(exc)}
+
+    logger.info("[purchase] node finished: status=%s", result.get("status"))
+    return {"purchase": {"product_id": order["product_id"], **result}}
+
+
+def _resolve_order(
+    selection: dict[str, Any], candidates: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Turn a selection into a concrete order (amount + merchant) using the candidate.
+
+    The gift-selection agent only returns the chosen product id, so we look the
+    product up among the search candidates to recover its price and merchant, and
+    derive a merchant category code from its category.
+    """
+    product_id = (selection.get("selected_product") or {}).get("id")
+    if not product_id:
+        return None
+    product = next((c for c in candidates if c.get("id") == product_id), None)
+    if product is None or product.get("price_usd") is None:
+        return None
+
+    merchant = product.get("merchant") or {}
+    category = str(product.get("category") or "").lower()
+    mcc = _CATEGORY_MCC.get(category, DEFAULT_MERCHANT_CATEGORY_CODE)
+    return {
+        "product_id": product_id,
+        "amount": round(float(product["price_usd"]) * 100),
+        "merchant_name": merchant.get("name") or "Unknown Merchant",
+        "merchant_category_code": mcc,
+    }
+
+
+def _shipping_address(user_profile: dict[str, Any]) -> dict[str, Any] | None:
+    """Pull the shipping address out of the user profile (``delivery.shipping_address``)."""
+    address = (user_profile.get("delivery") or {}).get("shipping_address")
+    return address if isinstance(address, dict) else None
+
+
 def _parse_json(text: str) -> dict[str, Any]:
     """Parse the model's JSON output, tolerating markdown code fences."""
     cleaned = text.strip()
@@ -199,13 +312,15 @@ def _parse_json(text: str) -> dict[str, Any]:
 # --------------------------------------------------------------------------------------
 @lru_cache(maxsize=1)
 def build_graph():
-    """Compile and cache the search -> select graph."""
+    """Compile and cache the search -> select -> purchase graph."""
     graph = StateGraph(GiftState)
     graph.add_node("search", search_node)
     graph.add_node("select", select_node)
+    graph.add_node("purchase", purchase_node)
     graph.add_edge(START, "search")
     graph.add_edge("search", "select")
-    graph.add_edge("select", END)
+    graph.add_edge("select", "purchase")
+    graph.add_edge("purchase", END)
     return graph.compile()
 
 
@@ -213,7 +328,11 @@ def run_agent(
     user_profile: dict[str, Any],
     current_date: str | None = None,
 ) -> GiftState:
-    """Run the full graph and return the final state (selection + candidates)."""
+    """Run the full graph and return the final state (selection + purchase + candidates).
+
+    After the select node chooses a gift, the purchase node buys it: it creates a
+    scoped card sized to the gift, then authorizes and settles the payment.
+    """
     state: GiftState = {
         "user_profile": user_profile,
         "current_date": current_date or date.today().isoformat(),
@@ -221,8 +340,9 @@ def run_agent(
     logger.info("[graph] run_agent started (current_date=%s)", state["current_date"])
     result = build_graph().invoke(state)
     logger.info(
-        "[graph] run_agent finished: %d candidates, selection=%s",
+        "[graph] run_agent finished: %d candidates, selection=%s, purchase=%s",
         len(result.get("search_results", [])),
         bool(result.get("selection")),
+        (result.get("purchase") or {}).get("status"),
     )
     return result

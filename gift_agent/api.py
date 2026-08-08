@@ -6,7 +6,10 @@
             "user_profile": { ... gift profile ... },   # defaults to user_profile.json
             "current_date": "2026-08-08"                 # defaults to today
           }
-        Returns the selection JSON plus the candidates the search step gathered.
+        Returns the selection JSON plus the resulting "purchase" envelope. After
+        the select step chooses a gift, the purchase node buys it: our side issues
+        a scoped card sized to the gift, then the partner checkout API processes
+        the transaction and settles the order.
 
     POST /card/fund
         Body:
@@ -93,6 +96,7 @@ class GiftResponse(BaseModel):
     selection: dict[str, Any]
     candidates: list[dict[str, Any]]
     search_calls: list[dict[str, Any]]
+    purchase: Optional[dict[str, Any]] = None
 
 
 class FundCardRequest(BaseModel):
@@ -193,6 +197,7 @@ def choose_gift(request: GiftRequest) -> GiftResponse:
         selection=result.get("selection", {}),
         candidates=[],
         search_calls=[],
+        purchase=result.get("purchase"),
     )
 
 
