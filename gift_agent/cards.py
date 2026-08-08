@@ -6,7 +6,7 @@ single-use "scoped" card for a fixed dollar amount:
     POST /v1/issuing/users/{userId}/cards/scoped
         Api-Key: <API_KEY>
         sessionid: <ENCRYPTED_SESSION_ID>
-        { "amountInUSDCents": 4299 }
+        { "amountInUSDCents": 4299, "allowedMccs": ["5411", "5812"] }
 
 The ``sessionid`` header must be an *encrypted* session id. A fresh one is
 minted (and encrypted with the RSA public key in
@@ -17,6 +17,7 @@ minted (and encrypted with the RSA public key in
 from __future__ import annotations
 
 import os
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import httpx
@@ -33,6 +34,7 @@ _SCOPED_CARD_URL = os.environ.get(
 def issue_scoped_card(
     *,
     amount_in_usd_cents: int,
+    allowed_mccs: Optional[list[str]] = None,
     user_id: Optional[str] = None,
     api_key: Optional[str] = None,
     timeout: float = 30.0,
@@ -55,6 +57,20 @@ def issue_scoped_card(
 
     encrypted_session_id = generate_session_id()["sessionId"]
 
+    # Expire the card one hour from now (e.g. "2026-09-01T00:00:00Z").
+    expires_at = (datetime.now(timezone.utc) + timedelta(hours=1)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+    payload: dict[str, Any] = {
+        "amountInUSDCents": amount_in_usd_cents,
+        "expiresAt": expires_at,
+    }
+    # Optionally restrict the card to specific merchant category codes,
+    # e.g. "allowedMccs": ["5411", "5812"].
+    if allowed_mccs:
+        payload["allowedMccs"] = allowed_mccs
+
     response = httpx.post(
         _SCOPED_CARD_URL.format(user_id=user_id),
         headers={
@@ -62,7 +78,7 @@ def issue_scoped_card(
             "sessionid": encrypted_session_id,
             "content-type": "application/json",
         },
-        json={"amountInUSDCents": amount_in_usd_cents},
+        json=payload,
         timeout=timeout,
     )
     response.raise_for_status()
