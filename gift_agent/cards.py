@@ -102,7 +102,9 @@ def issue_scoped_card(
         json=payload,
         timeout=timeout,
     )
-    logger.info("[rain] scoped card response: %d", response.status_code)
+    logger.info(
+        "[rain] scoped card response: %d %s", response.status_code, response.text
+    )
     response.raise_for_status()
     try:
         return response.json()
@@ -164,7 +166,9 @@ def authorize_transaction(
         json=payload,
         timeout=timeout,
     )
-    logger.info("[rain] authorize response: %d", response.status_code)
+    logger.info(
+        "[rain] authorize response: %d %s", response.status_code, response.text
+    )
     response.raise_for_status()
     try:
         return response.json()
@@ -209,7 +213,9 @@ def settle_transaction(
         json=payload,
         timeout=timeout,
     )
-    logger.info("[rain] settle response: %d", response.status_code)
+    logger.info(
+        "[rain] settle response: %d %s", response.status_code, response.text
+    )
     response.raise_for_status()
     try:
         return response.json()
