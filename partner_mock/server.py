@@ -15,6 +15,7 @@ import os
 from typing import Any, Optional
 
 import httpx
+from dotenv import load_dotenv
 
 try:  # mcp >= 2.0 renamed the high-level server class
     from mcp.server.mcpserver import MCPServer as _Server
@@ -26,6 +27,8 @@ from starlette.responses import JSONResponse
 
 from . import checkout, search
 from .models import SearchParams, SortOrder
+
+load_dotenv()
 
 logger = logging.getLogger("partner_mock")
 
