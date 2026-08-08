@@ -13,6 +13,16 @@
           { "amount": 100000 }                          # funding amount, required
         Funds the collateral account via the Rain cards API and returns its response.
 
+    POST /card/scoped
+        Body:
+          {
+            "amount_in_usd_cents": 4299,                 # card spend limit, required
+            "session_id": "...",                         # plaintext, encrypted server-side
+            "encrypted_session_id": "...",               # OR a pre-encrypted sessionid
+            "user_id": "..."                             # defaults to USER_ID env
+          }
+        Issues a single-use scoped card via the Rain issuing API.
+
 Run with:  python -m gift_agent.api   (or: uvicorn gift_agent.api:app)
 """
 
@@ -29,6 +39,7 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from . import cards
 from .graph import run_agent
 
 logger = logging.getLogger("gift_agent.api")
@@ -68,6 +79,25 @@ class FundCardRequest(BaseModel):
 
 
 class FundCardResponse(BaseModel):
+    result: dict[str, Any]
+
+
+class ScopedCardRequest(BaseModel):
+    amount_in_usd_cents: int = Field(
+        ..., gt=0, description="Card spend limit in US cents (e.g. 4299 = $42.99)."
+    )
+    session_id: Optional[str] = Field(
+        None, description="Plaintext session id; encrypted server-side into the sessionid header."
+    )
+    encrypted_session_id: Optional[str] = Field(
+        None, description="Pre-encrypted sessionid header value (alternative to session_id)."
+    )
+    user_id: Optional[str] = Field(
+        None, description="Rain user id. Defaults to the USER_ID environment variable."
+    )
+
+
+class ScopedCardResponse(BaseModel):
     result: dict[str, Any]
 
 
@@ -141,6 +171,42 @@ def fund_card(request: FundCardRequest) -> FundCardResponse:
         result = {"raw": response.text}
     logger.info("POST /card/fund done: Rain API responded %d", response.status_code)
     return FundCardResponse(result=result)
+
+
+@app.post("/card/scoped", response_model=ScopedCardResponse)
+def issue_scoped_card(request: ScopedCardRequest) -> ScopedCardResponse:
+    """Issue a single-use scoped card via the Rain issuing API.
+
+    Reads the API key and (by default) the user id from the environment
+    (``API_KEY`` / ``USER_ID``); the caller supplies the amount and a session id.
+    """
+    logger.info(
+        "POST /card/scoped (amount_in_usd_cents=%s, user_id=%s)",
+        request.amount_in_usd_cents,
+        request.user_id or "<env>",
+    )
+    try:
+        result = cards.issue_scoped_card(
+            amount_in_usd_cents=request.amount_in_usd_cents,
+            session_id=request.session_id,
+            encrypted_session_id=request.encrypted_session_id,
+            user_id=request.user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "POST /card/scoped: Rain API returned %d", exc.response.status_code
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"Rain API returned {exc.response.status_code}: {exc.response.text}",
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Rain API request failed: {exc}") from exc
+
+    logger.info("POST /card/scoped done")
+    return ScopedCardResponse(result=result)
 
 
 def main() -> None:

@@ -1,0 +1,30 @@
+meta {
+  name: Scoped Card
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/card/scoped
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "amount_in_usd_cents": 4299,
+    "session_id": "replace-with-plaintext-session-id"
+  }
+}
+
+docs {
+  Issue a single-use scoped card via the Rain issuing API. The server reads the
+  API key and user id from its environment (`API_KEY` / `USER_ID`) and encrypts
+  the plaintext `session_id` into the `sessionid` header using
+  `SESSION_ID_CRYPTO_PUBLIC_KEY`. Alternatively, pass `encrypted_session_id` with
+  an already-encrypted value instead of `session_id`.
+}
