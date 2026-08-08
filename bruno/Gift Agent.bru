@@ -1,0 +1,25 @@
+meta {
+  name: Gift Agent
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/agent/gift
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {}
+}
+
+docs {
+  Run the gift agent (search -> select graph). An empty body `{}` uses the
+  default `user_profile.json` and today's date. Optionally pass
+  `{ "user_profile": { ... }, "current_date": "2026-08-08" }`.
+}
