@@ -8,12 +8,15 @@ transports use, so the agent sees the identical envelope.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from partner_mock import search
 from partner_mock.models import SearchParams
 
 from . import cards
+
+logger = logging.getLogger("gift_agent")
 
 SEARCH_TOOL_NAME = "search_products"
 
@@ -64,16 +67,27 @@ def run_purchase(
     if an id cannot be resolved, and ``httpx.HTTPStatusError`` if Rain returns a
     non-2xx status.
     """
+    logger.info(
+        "[purchase] run_purchase started (amount=%d cents, merchant=%s, mcc=%s)",
+        amount,
+        merchant_name,
+        merchant_category_code,
+    )
+
     # 1. Create a scoped card sized to (and locked to the merchant category of) the gift.
+    logger.info("[purchase] step 1/3: issuing scoped card for %d cents", amount)
     card = cards.issue_scoped_card(
         amount_in_usd_cents=amount,
         allowed_mccs=[merchant_category_code] if merchant_category_code else None,
     )
     card_id = cards.extract_card_id(card)
     if not card_id:
+        logger.error("[purchase] step 1/3 failed: no card id in issue response")
         raise ValueError("Could not resolve the issued card id from the Rain response.")
+    logger.info("[purchase] step 1/3 done: card issued (card_id=%s)", card_id)
 
     # 2. Authorize the payment against the freshly issued card.
+    logger.info("[purchase] step 2/3: authorizing %d cents on card %s", amount, card_id)
     authorization = cards.authorize_transaction(
         card_id=card_id,
         amount=amount,
@@ -83,11 +97,24 @@ def run_purchase(
     )
     transaction_id = cards.extract_transaction_id(authorization)
     if not transaction_id:
+        logger.error("[purchase] step 2/3 failed: no transaction id in authorize response")
         raise ValueError("Could not resolve the transaction id from the authorize response.")
+    logger.info(
+        "[purchase] step 2/3 done: authorized (transaction_id=%s)", transaction_id
+    )
 
     # 3. Settle the payment for the full authorized amount.
+    logger.info(
+        "[purchase] step 3/3: settling transaction %s for %d cents", transaction_id, amount
+    )
     settlement = cards.settle_transaction(transaction_id=transaction_id, amount=amount)
+    logger.info("[purchase] step 3/3 done: transaction %s settled", transaction_id)
 
+    logger.info(
+        "[purchase] run_purchase finished: settled (card_id=%s, transaction_id=%s)",
+        card_id,
+        transaction_id,
+    )
     return {
         "status": "settled",
         "card_id": card_id,

@@ -16,6 +16,7 @@ minted (and encrypted with the RSA public key in
 
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -23,6 +24,8 @@ from typing import Any, Optional
 import httpx
 
 from crypto.crypto import generate_session_id
+
+logger = logging.getLogger("gift_agent")
 
 # Endpoint template. Overridable for staging/prod; ``{user_id}`` is filled in.
 _SCOPED_CARD_URL = os.environ.get(
@@ -83,6 +86,12 @@ def issue_scoped_card(
     if allowed_mccs:
         payload["allowedMccs"] = allowed_mccs
 
+    logger.info(
+        "[rain] POST scoped card (user=%s, amount=%d cents, mccs=%s)",
+        user_id,
+        amount_in_usd_cents,
+        allowed_mccs or "<any>",
+    )
     response = httpx.post(
         _SCOPED_CARD_URL.format(user_id=user_id),
         headers={
@@ -93,6 +102,7 @@ def issue_scoped_card(
         json=payload,
         timeout=timeout,
     )
+    logger.info("[rain] scoped card response: %d", response.status_code)
     response.raise_for_status()
     try:
         return response.json()
@@ -141,12 +151,20 @@ def authorize_transaction(
     if decline_reason:
         payload["declineReason"] = decline_reason
 
+    logger.info(
+        "[rain] POST authorize (card=%s, amount=%d cents, mcc=%s, decline=%s)",
+        card_id,
+        amount,
+        merchant_category_code,
+        decline_reason or "<none>",
+    )
     response = httpx.post(
         _AUTHORIZE_TRANSACTION_URL,
         headers={"Api-Key": api_key, "content-type": "application/json"},
         json=payload,
         timeout=timeout,
     )
+    logger.info("[rain] authorize response: %d", response.status_code)
     response.raise_for_status()
     try:
         return response.json()
@@ -180,12 +198,18 @@ def settle_transaction(
     if amount is not None:
         payload["amount"] = amount
 
+    logger.info(
+        "[rain] POST settle (transaction=%s, amount=%s)",
+        transaction_id,
+        amount if amount is not None else "<original>",
+    )
     response = httpx.post(
         _SETTLE_TRANSACTION_URL.format(transaction_id=transaction_id),
         headers={"Api-Key": api_key, "content-type": "application/json"},
         json=payload,
         timeout=timeout,
     )
+    logger.info("[rain] settle response: %d", response.status_code)
     response.raise_for_status()
     try:
         return response.json()
