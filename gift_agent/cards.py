@@ -36,6 +36,12 @@ _AUTHORIZE_TRANSACTION_URL = os.environ.get(
     "https://api-dev.raincards.xyz/v1/simulate/transactions/authorize",
 )
 
+# The Rain "simulate transaction settle" endpoint. ``{transaction_id}`` is filled in.
+_SETTLE_TRANSACTION_URL = os.environ.get(
+    "RAIN_SETTLE_TRANSACTION_URL",
+    "https://api-dev.raincards.xyz/v1/simulate/transactions/{transaction_id}/settle",
+)
+
 
 def issue_scoped_card(
     *,
@@ -137,6 +143,45 @@ def authorize_transaction(
 
     response = httpx.post(
         _AUTHORIZE_TRANSACTION_URL,
+        headers={"Api-Key": api_key, "content-type": "application/json"},
+        json=payload,
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    try:
+        return response.json()
+    except ValueError:
+        return {"raw": response.text}
+
+
+def settle_transaction(
+    *,
+    transaction_id: str,
+    amount: Optional[int] = None,
+    api_key: Optional[str] = None,
+    timeout: float = 30.0,
+) -> dict[str, Any]:
+    """Settle an authorized transaction via the Rain simulate API.
+
+    ``api_key`` defaults to the ``API_KEY`` environment variable; the tenant
+    scope is resolved from it. ``amount`` is the settlement amount in cents; if
+    omitted, the original authorization amount is settled.
+
+    Raises ``ValueError`` for missing configuration or unsupported input, and
+    ``httpx.HTTPStatusError`` if Rain returns a non-2xx status.
+    """
+    api_key = api_key or os.environ.get("API_KEY")
+    if not api_key:
+        raise ValueError("API_KEY is not set.")
+    if amount is not None and amount <= 0:
+        raise ValueError("amount must be a positive integer (cents).")
+
+    payload: dict[str, Any] = {}
+    if amount is not None:
+        payload["amount"] = amount
+
+    response = httpx.post(
+        _SETTLE_TRANSACTION_URL.format(transaction_id=transaction_id),
         headers={"Api-Key": api_key, "content-type": "application/json"},
         json=payload,
         timeout=timeout,

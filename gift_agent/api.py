@@ -36,6 +36,14 @@
         Simulates a card authorization via the Rain simulate API and returns its
         response. The card must be active and belong to the calling tenant.
 
+    POST /v1/simulate/transactions/{transactionId}/settle
+        Body (optional):
+          {
+            "amount": 5000                               # settlement cents, optional
+          }
+        Settles an existing authorized transaction via the Rain simulate API. If
+        "amount" is omitted, settles for the original authorization amount.
+
 Run with:  python -m gift_agent.api   (or: uvicorn gift_agent.api:app)
 """
 
@@ -146,6 +154,18 @@ class AuthorizeTransactionRequest(BaseModel):
 
 
 class AuthorizeTransactionResponse(BaseModel):
+    result: dict[str, Any]
+
+
+class SettleTransactionRequest(BaseModel):
+    amount: Optional[int] = Field(
+        None,
+        gt=0,
+        description="Settlement amount in cents. If omitted, settles for the original authorization amount.",
+    )
+
+
+class SettleTransactionResponse(BaseModel):
     result: dict[str, Any]
 
 
@@ -302,6 +322,49 @@ def simulate_authorize(
 
     logger.info("POST /v1/simulate/transactions/authorize done")
     return AuthorizeTransactionResponse(result=result)
+
+
+@app.post(
+    "/v1/simulate/transactions/{transaction_id}/settle",
+    response_model=SettleTransactionResponse,
+)
+def simulate_settle(
+    transaction_id: str,
+    request: SettleTransactionRequest,
+) -> SettleTransactionResponse:
+    """Settle an existing authorized transaction via the Rain simulate API.
+
+    Reads the API key from the environment (``API_KEY``) and forwards it as the
+    ``Api-Key`` header; the tenant scope is resolved from that key. If no amount
+    is supplied, the original authorization amount is settled.
+    """
+    logger.info(
+        "POST /v1/simulate/transactions/%s/settle (amount=%s)",
+        transaction_id,
+        request.amount if request.amount is not None else "<original>",
+    )
+    try:
+        result = cards.settle_transaction(
+            transaction_id=transaction_id,
+            amount=request.amount,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "POST /v1/simulate/transactions/%s/settle: Rain API returned %d",
+            transaction_id,
+            exc.response.status_code,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"Rain API returned {exc.response.status_code}: {exc.response.text}",
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Rain API request failed: {exc}") from exc
+
+    logger.info("POST /v1/simulate/transactions/%s/settle done", transaction_id)
+    return SettleTransactionResponse(result=result)
 
 
 def main() -> None:
