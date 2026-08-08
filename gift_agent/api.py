@@ -109,6 +109,10 @@ class OrdersResponse(BaseModel):
     orders: list[dict[str, Any]]
 
 
+class ClearOrdersResponse(BaseModel):
+    status: str
+
+
 class FundCardRequest(BaseModel):
     amount: int = Field(..., gt=0, description="Amount to fund the collateral account with.")
 
@@ -223,6 +227,13 @@ def list_orders() -> OrdersResponse:
     orders = store.get_orders(user_id)
     logger.info("GET /orders (user_id=%s): %d order(s)", user_id, len(orders))
     return OrdersResponse(user_id=user_id, orders=orders)
+
+
+@app.delete("/orders", response_model=ClearOrdersResponse)
+def clear_orders() -> ClearOrdersResponse:
+    store.clear()
+    logger.info("DELETE /orders: cleared all orders")
+    return ClearOrdersResponse(status="cleared")
 
 
 @app.post("/card/fund", response_model=FundCardResponse)

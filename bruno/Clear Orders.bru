@@ -1,0 +1,14 @@
+meta {
+  name: Clear Orders
+  type: http
+  seq: 3
+}
+
+delete {
+  url: {{baseUrl}}/orders
+  auth: none
+}
+
+docs {
+  Clear the in-memory order store, dropping all stored orders for every user.
+}
