@@ -23,6 +23,19 @@
         Issues a single-use scoped card via the Rain issuing API. A fresh
         session id is generated server-side for every request.
 
+    POST /v1/simulate/transactions/authorize
+        Body:
+          {
+            "cardId": "a7f2c5b1-...",                    # Rain card id, required
+            "amount": 5000,                              # USD cents, required
+            "currency": "USD",                           # only "USD" supported
+            "merchantName": "Coffee Shop",               # required
+            "merchantCategoryCode": "5814",              # MCC, required
+            "declineReason": "..."                       # optional, simulate a decline
+          }
+        Simulates a card authorization via the Rain simulate API and returns its
+        response. The card must be active and belong to the calling tenant.
+
 Run with:  python -m gift_agent.api   (or: uvicorn gift_agent.api:app)
 """
 
@@ -37,7 +50,7 @@ from typing import Any, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from . import cards
 from .graph import run_agent
@@ -96,6 +109,43 @@ class ScopedCardRequest(BaseModel):
 
 
 class ScopedCardResponse(BaseModel):
+    result: dict[str, Any]
+
+
+class AuthorizeTransactionRequest(BaseModel):
+    # Accept the documented camelCase body (e.g. "cardId"); snake_case also works.
+    model_config = ConfigDict(populate_by_name=True)
+
+    card_id: str = Field(
+        ..., alias="cardId", description="The Rain card ID to authorize against (UUID)."
+    )
+    amount: int = Field(
+        ..., gt=0, description="The transaction amount in USD cents. Must be positive."
+    )
+    currency: str = Field(
+        "USD", description='The merchant currency code. Only "USD" is supported.'
+    )
+    merchant_name: str = Field(..., alias="merchantName", description="The merchant name.")
+    merchant_category_code: str = Field(
+        ...,
+        alias="merchantCategoryCode",
+        description='The merchant category code (MCC), e.g. "5814" for fast food.',
+    )
+    decline_reason: Optional[str] = Field(
+        None,
+        alias="declineReason",
+        description="Simulate a declined authorization with this decline reason.",
+    )
+
+    @field_validator("currency")
+    @classmethod
+    def _only_usd(cls, value: str) -> str:
+        if value != "USD":
+            raise ValueError('currency must be "USD".')
+        return value
+
+
+class AuthorizeTransactionResponse(BaseModel):
     result: dict[str, Any]
 
 
@@ -204,6 +254,54 @@ def issue_scoped_card(request: ScopedCardRequest) -> ScopedCardResponse:
 
     logger.info("POST /card/scoped done")
     return ScopedCardResponse(result=result)
+
+
+@app.post(
+    "/v1/simulate/transactions/authorize",
+    response_model=AuthorizeTransactionResponse,
+)
+def simulate_authorize(
+    request: AuthorizeTransactionRequest,
+) -> AuthorizeTransactionResponse:
+    """Simulate a card authorization via the Rain simulate API.
+
+    Reads the API key from the environment (``API_KEY``) and forwards it as the
+    ``Api-Key`` header; the tenant scope is resolved from that key. The card must
+    be active and belong to the calling tenant — locked, canceled, or unactivated
+    cards cannot be authorized.
+    """
+    logger.info(
+        "POST /v1/simulate/transactions/authorize (card_id=%s, amount=%s, mcc=%s, decline=%s)",
+        request.card_id,
+        request.amount,
+        request.merchant_category_code,
+        request.decline_reason or "<none>",
+    )
+    try:
+        result = cards.authorize_transaction(
+            card_id=request.card_id,
+            amount=request.amount,
+            currency=request.currency,
+            merchant_name=request.merchant_name,
+            merchant_category_code=request.merchant_category_code,
+            decline_reason=request.decline_reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "POST /v1/simulate/transactions/authorize: Rain API returned %d",
+            exc.response.status_code,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"Rain API returned {exc.response.status_code}: {exc.response.text}",
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Rain API request failed: {exc}") from exc
+
+    logger.info("POST /v1/simulate/transactions/authorize done")
+    return AuthorizeTransactionResponse(result=result)
 
 
 def main() -> None:

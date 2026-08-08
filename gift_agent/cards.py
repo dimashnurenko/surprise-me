@@ -30,6 +30,12 @@ _SCOPED_CARD_URL = os.environ.get(
     "https://api-dev.raincards.xyz/v1/issuing/users/{user_id}/cards/scoped",
 )
 
+# The Rain "simulate transaction authorize" endpoint. Overridable for staging/prod.
+_AUTHORIZE_TRANSACTION_URL = os.environ.get(
+    "RAIN_AUTHORIZE_TRANSACTION_URL",
+    "https://api-dev.raincards.xyz/v1/simulate/transactions/authorize",
+)
+
 
 def issue_scoped_card(
     *,
@@ -78,6 +84,60 @@ def issue_scoped_card(
             "sessionid": encrypted_session_id,
             "content-type": "application/json",
         },
+        json=payload,
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    try:
+        return response.json()
+    except ValueError:
+        return {"raw": response.text}
+
+
+def authorize_transaction(
+    *,
+    card_id: str,
+    amount: int,
+    merchant_name: str,
+    merchant_category_code: str,
+    currency: str = "USD",
+    decline_reason: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout: float = 30.0,
+) -> dict[str, Any]:
+    """Simulate a card authorization via the Rain API and return the response.
+
+    The card must be active and belong to the tenant resolved from ``api_key``;
+    cards in locked, canceled, or unactivated status cannot be authorized.
+
+    ``api_key`` defaults to the ``API_KEY`` environment variable. Pass
+    ``decline_reason`` to simulate a declined authorization.
+
+    Raises ``ValueError`` for missing configuration or unsupported input, and
+    ``httpx.HTTPStatusError`` if Rain returns a non-2xx status.
+    """
+    api_key = api_key or os.environ.get("API_KEY")
+    if not api_key:
+        raise ValueError("API_KEY is not set.")
+    if currency != "USD":
+        raise ValueError('currency must be "USD".')
+    if amount <= 0:
+        raise ValueError("amount must be a positive integer (USD cents).")
+
+    payload: dict[str, Any] = {
+        "cardId": card_id,
+        "amount": amount,
+        "currency": currency,
+        "merchantName": merchant_name,
+        "merchantCategoryCode": merchant_category_code,
+    }
+    # Optionally simulate a declined authorization instead of an approval.
+    if decline_reason:
+        payload["declineReason"] = decline_reason
+
+    response = httpx.post(
+        _AUTHORIZE_TRANSACTION_URL,
+        headers={"Api-Key": api_key, "content-type": "application/json"},
         json=payload,
         timeout=timeout,
     )
