@@ -19,7 +19,9 @@ body:json {
 }
 
 docs {
-  Run the gift agent (search -> select graph). An empty body `{}` uses the
-  default `user_profile.json` and today's date. Optionally pass
-  `{ "user_profile": { ... }, "current_date": "2026-08-08" }`.
+  Run the gift agent (search -> select -> purchase -> fulfillment graph). An
+  empty body `{}` uses the default `user_profile.json` and today's date.
+  Optionally pass `{ "user_profile": { ... }, "current_date": "2026-08-08" }`.
+  Returns only the overall status: `{ "status": "fulfilled" }` or
+  `{ "status": "failed" }`.
 }

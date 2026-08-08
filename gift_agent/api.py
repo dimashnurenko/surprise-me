@@ -6,10 +6,11 @@
             "user_profile": { ... gift profile ... },   # defaults to user_profile.json
             "current_date": "2026-08-08"                 # defaults to today
           }
-        Returns the selection JSON plus the resulting "purchase" envelope. After
-        the select step chooses a gift, the purchase node buys it: our side issues
-        a scoped card sized to the gift, then the partner checkout API processes
-        the transaction and settles the order.
+        Runs the full search -> select -> purchase -> fulfillment graph: the
+        select step chooses a gift, the purchase node buys it (our side issues a
+        scoped card sized to the gift, then the partner checkout API processes and
+        settles the transaction), and the fulfillment node persists the order.
+        Returns only the overall status: "fulfilled" or "failed".
 
     GET /orders
         Returns the stored orders for the current user (hardcoded to the USER_ID
@@ -98,10 +99,9 @@ class GiftRequest(BaseModel):
 
 
 class GiftResponse(BaseModel):
-    selection: dict[str, Any]
-    candidates: list[dict[str, Any]]
-    search_calls: list[dict[str, Any]]
-    purchase: Optional[dict[str, Any]] = None
+    # The overall outcome of the run: "fulfilled" if the order was placed and
+    # persisted, "failed" otherwise.
+    status: str
 
 
 class OrdersResponse(BaseModel):
@@ -190,7 +190,11 @@ def healthz() -> dict[str, str]:
 
 @app.post("/agent/gift", response_model=GiftResponse)
 def choose_gift(request: GiftRequest) -> GiftResponse:
-    """Run the search -> select graph and return the chosen gift."""
+    """Run the search -> select -> purchase -> fulfillment graph.
+
+    Returns only the overall outcome: ``"fulfilled"`` when the order was placed
+    and persisted by the fulfillment node, ``"failed"`` otherwise.
+    """
     profile = request.user_profile or _default_profile()
     current_date = request.current_date or date.today().isoformat()
     logger.info(
@@ -199,16 +203,10 @@ def choose_gift(request: GiftRequest) -> GiftResponse:
         current_date,
     )
     result = run_agent(profile, current_date)
-    logger.info(
-        "POST /agent/gift done: %d candidate(s) returned",
-        len(result.get("search_results", [])),
-    )
-    return GiftResponse(
-        selection=result.get("selection", {}),
-        candidates=[],
-        search_calls=[],
-        purchase=result.get("purchase"),
-    )
+    fulfilled = (result.get("fulfillment") or {}).get("status") == "stored"
+    status = "fulfilled" if fulfilled else "failed"
+    logger.info("POST /agent/gift done: status=%s", status)
+    return GiftResponse(status=status)
 
 
 @app.get("/orders", response_model=OrdersResponse)

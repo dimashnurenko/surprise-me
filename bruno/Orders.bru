@@ -1,0 +1,17 @@
+meta {
+  name: Orders
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/orders
+  auth: none
+}
+
+docs {
+  Return the stored orders for the current user (hardcoded to the server's
+  `USER_ID` environment variable). Orders are persisted by the gift agent's
+  fulfillment node in an in-memory store, so this only reflects orders placed
+  since the server last started.
+}
