@@ -11,6 +11,11 @@
         a scoped card sized to the gift, then the partner checkout API processes
         the transaction and settles the order.
 
+    GET /orders
+        Returns the stored orders for the current user (hardcoded to the USER_ID
+        environment variable). Orders are persisted by the graph's fulfillment node
+        in an in-memory store, so this reflects orders placed since the server started.
+
     POST /card/fund
         Body:
           { "amount": 100000 }                          # funding amount, required
@@ -63,7 +68,7 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from . import cards
+from . import cards, store
 from .graph import run_agent
 
 logger = logging.getLogger("gift_agent.api")
@@ -97,6 +102,11 @@ class GiftResponse(BaseModel):
     candidates: list[dict[str, Any]]
     search_calls: list[dict[str, Any]]
     purchase: Optional[dict[str, Any]] = None
+
+
+class OrdersResponse(BaseModel):
+    user_id: str
+    orders: list[dict[str, Any]]
 
 
 class FundCardRequest(BaseModel):
@@ -199,6 +209,22 @@ def choose_gift(request: GiftRequest) -> GiftResponse:
         search_calls=[],
         purchase=result.get("purchase"),
     )
+
+
+@app.get("/orders", response_model=OrdersResponse)
+def list_orders() -> OrdersResponse:
+    """Return the stored orders for the current user.
+
+    The user is hardcoded to the ``USER_ID`` environment variable — the same id the
+    fulfillment node stores orders under. Orders live in an in-memory store, so this
+    only returns orders placed since the server last started.
+    """
+    user_id = os.environ.get("USER_ID")
+    if not user_id:
+        raise HTTPException(status_code=500, detail="USER_ID is not set.")
+    orders = store.get_orders(user_id)
+    logger.info("GET /orders (user_id=%s): %d order(s)", user_id, len(orders))
+    return OrdersResponse(user_id=user_id, orders=orders)
 
 
 @app.post("/card/fund", response_model=FundCardResponse)
