@@ -47,12 +47,10 @@ def gift_selection_system_prompt(
     user_profile: dict[str, Any],
     search_results: Any,
     current_date: str,
-    card_id: str | None = None,
 ) -> str:
     return _render(
         _load("gift_selection_agent_system_prompt.md"),
         {
-            "card_id": card_id or "(none configured — do NOT call purchase_gift)",
             "user_profile_json": _dumps(user_profile),
             "search_results_json": _dumps(search_results),
             "current_date": current_date,

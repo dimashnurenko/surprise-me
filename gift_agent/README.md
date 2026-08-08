@@ -4,7 +4,7 @@ A two-node LangGraph graph on top of the partner marketplace search core, plus a
 HTTP endpoint to trigger it. Uses the cheapest Claude model (`claude-haiku-4-5`).
 
 ```
-START ──▶ search ──▶ select ──▶ END
+START ──▶ search ──▶ select ──▶ purchase ──▶ END
 ```
 
 - **`search`** — runs the Product Search Agent system prompt
@@ -15,11 +15,13 @@ START ──▶ search ──▶ select ──▶ END
   `partner_mock.search.search_products` — the same core used by the HTTP/MCP transports.
 - **`select`** — runs the Gift Selection Agent system prompt
   (`prompts/gift_selection_agent_system_prompt.md`) over those candidates and returns
-  the exact JSON decision specified in that prompt. When a scoped `card_id` is passed
-  to `run_agent`, the agent also **buys** the chosen gift by calling the internal
-  `purchase_gift` tool, which authorizes and then settles the charge in one step
-  (`gift_agent.cards.purchase_transaction`). The tool call parameters and its result
-  are returned under `purchase`.
+  the exact JSON decision specified in that prompt. This agent does not call tools.
+- **`purchase`** — takes the selection as an order, resolves the chosen product back to
+  its search candidate (for price + merchant), and calls `gift_agent.tools.run_purchase`,
+  a plain function that buys the gift in three steps: **(1)** issue a scoped card sized to
+  the gift, **(2)** authorize the payment, **(3)** settle it. The result (issued card id,
+  transaction id, and raw responses) is returned under `purchase`. If nothing was selected
+  it buys nothing.
 
 ## Setup
 

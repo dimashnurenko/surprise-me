@@ -16,7 +16,6 @@ from partner_mock.models import SearchParams
 from . import cards
 
 SEARCH_TOOL_NAME = "search_products"
-PURCHASE_TOOL_NAME = "purchase_gift"
 
 
 def search_tool_schema() -> dict[str, Any]:
@@ -41,75 +40,59 @@ def run_search_tool(tool_input: dict[str, Any]) -> dict[str, Any]:
     return search.search_products(params)
 
 
-def purchase_tool_schema() -> dict[str, Any]:
-    """Anthropic tool definition for the authorize-then-settle purchase.
+def run_purchase(
+    *,
+    amount: int,
+    merchant_name: str,
+    merchant_category_code: str,
+    currency: str = "USD",
+) -> dict[str, Any]:
+    """Buy a gift end-to-end: issue a scoped card, authorize, then settle.
 
-    The tool wraps :func:`gift_agent.cards.purchase_transaction`, which performs a
-    card authorization immediately followed by a settlement, so a single tool call
-    completes the whole charge for the chosen gift.
+    A plain function (not an agent tool) called by the purchase node after the
+    gift-selection agent has chosen a product. It performs three sequential
+    actions against the Rain API:
+
+    1. **Create a scoped card** for exactly ``amount`` (USD cents), restricted to
+       ``merchant_category_code``.
+    2. **Authorize** ``amount`` on that card at ``merchant_name`` /
+       ``merchant_category_code``.
+    3. **Settle** the resulting transaction for the full authorized amount.
+
+    Returns an envelope with the issued card id, the transaction id and the raw
+    responses from each step. Raises ``ValueError`` for missing configuration or
+    if an id cannot be resolved, and ``httpx.HTTPStatusError`` if Rain returns a
+    non-2xx status.
     """
-    return {
-        "name": PURCHASE_TOOL_NAME,
-        "description": (
-            "Charge the user's scoped card for the selected gift by authorizing and "
-            "then settling a single transaction in one step. Call this exactly once, "
-            "for the product you decided to buy, using its price and merchant. `amount` "
-            "is the price in US cents (e.g. $42.99 -> 4299). `merchant_category_code` is "
-            "the merchant's MCC. Omit `settle_amount` to settle the full authorized "
-            "amount. Only set `decline_reason` to deliberately simulate a declined charge."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "card_id": {
-                    "type": "string",
-                    "description": "The scoped card id to charge (provided in the context).",
-                },
-                "amount": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "description": "Authorization amount in US cents (price_usd * 100).",
-                },
-                "merchant_name": {
-                    "type": "string",
-                    "description": "The merchant selling the chosen product.",
-                },
-                "merchant_category_code": {
-                    "type": "string",
-                    "description": 'The merchant category code (MCC), e.g. "5941".',
-                },
-                "currency": {
-                    "type": "string",
-                    "enum": ["USD"],
-                    "default": "USD",
-                    "description": 'Merchant currency. Only "USD" is supported.',
-                },
-                "settle_amount": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "description": (
-                        "Optional settlement amount in US cents; omit to settle the full "
-                        "authorized amount."
-                    ),
-                },
-                "decline_reason": {
-                    "type": "string",
-                    "description": "Optional. Simulate a declined authorization with this reason.",
-                },
-            },
-            "required": ["card_id", "amount", "merchant_name", "merchant_category_code"],
-        },
-    }
-
-
-def run_purchase_tool(tool_input: dict[str, Any]) -> dict[str, Any]:
-    """Execute a ``purchase_gift`` tool call (authorize + settle) and return the envelope."""
-    return cards.purchase_transaction(
-        card_id=tool_input["card_id"],
-        amount=tool_input["amount"],
-        merchant_name=tool_input["merchant_name"],
-        merchant_category_code=tool_input["merchant_category_code"],
-        currency=tool_input.get("currency", "USD"),
-        settle_amount=tool_input.get("settle_amount"),
-        decline_reason=tool_input.get("decline_reason"),
+    # 1. Create a scoped card sized to (and locked to the merchant category of) the gift.
+    card = cards.issue_scoped_card(
+        amount_in_usd_cents=amount,
+        allowed_mccs=[merchant_category_code] if merchant_category_code else None,
     )
+    card_id = cards.extract_card_id(card)
+    if not card_id:
+        raise ValueError("Could not resolve the issued card id from the Rain response.")
+
+    # 2. Authorize the payment against the freshly issued card.
+    authorization = cards.authorize_transaction(
+        card_id=card_id,
+        amount=amount,
+        merchant_name=merchant_name,
+        merchant_category_code=merchant_category_code,
+        currency=currency,
+    )
+    transaction_id = cards.extract_transaction_id(authorization)
+    if not transaction_id:
+        raise ValueError("Could not resolve the transaction id from the authorize response.")
+
+    # 3. Settle the payment for the full authorized amount.
+    settlement = cards.settle_transaction(transaction_id=transaction_id, amount=amount)
+
+    return {
+        "status": "settled",
+        "card_id": card_id,
+        "transaction_id": transaction_id,
+        "card": card,
+        "authorization": authorization,
+        "settlement": settlement,
+    }
