@@ -191,3 +191,109 @@ def settle_transaction(
         return response.json()
     except ValueError:
         return {"raw": response.text}
+
+
+def _extract_transaction_id(authorization: dict[str, Any]) -> Optional[str]:
+    """Best-effort pull of the transaction id out of an authorize response.
+
+    Rain's simulate API has varied the field name/nesting across versions, so we
+    probe the common shapes (top-level ``id``/``transactionId``, and the same
+    keys nested under ``transaction``/``data``) rather than hard-coding one.
+    """
+    candidates: list[Any] = [
+        authorization.get("transactionId"),
+        authorization.get("transaction_id"),
+        authorization.get("id"),
+    ]
+    for nested_key in ("transaction", "data", "result"):
+        nested = authorization.get(nested_key)
+        if isinstance(nested, dict):
+            candidates.extend(
+                [nested.get("transactionId"), nested.get("transaction_id"), nested.get("id")]
+            )
+    for value in candidates:
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def purchase_transaction(
+    *,
+    card_id: str,
+    amount: int,
+    merchant_name: str,
+    merchant_category_code: str,
+    currency: str = "USD",
+    settle_amount: Optional[int] = None,
+    decline_reason: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout: float = 30.0,
+) -> dict[str, Any]:
+    """Authorize and then settle a card transaction in one call.
+
+    This is the end-to-end "make the purchase" operation: it first authorizes
+    ``amount`` (USD cents) against ``card_id`` via :func:`authorize_transaction`,
+    then settles the resulting transaction via :func:`settle_transaction`.
+    ``settle_amount`` (cents) lets the caller settle for less than the
+    authorization; when omitted the full authorized amount is settled.
+
+    Returns a combined envelope::
+
+        {
+            "status": "settled" | "declined" | "authorized_not_settled",
+            "transaction_id": "<id or null>",
+            "authorization": { ...authorize response... },
+            "settlement": { ...settle response, or null if not settled... },
+        }
+
+    If ``decline_reason`` is passed the authorization is simulated as declined and
+    no settlement is attempted. Raises ``ValueError`` for missing configuration or
+    unsupported input, and ``httpx.HTTPStatusError`` if Rain returns a non-2xx
+    status.
+    """
+    if settle_amount is not None and settle_amount <= 0:
+        raise ValueError("settle_amount must be a positive integer (USD cents).")
+
+    authorization = authorize_transaction(
+        card_id=card_id,
+        amount=amount,
+        merchant_name=merchant_name,
+        merchant_category_code=merchant_category_code,
+        currency=currency,
+        decline_reason=decline_reason,
+        api_key=api_key,
+        timeout=timeout,
+    )
+
+    # A simulated decline never produces a settleable transaction.
+    if decline_reason:
+        return {
+            "status": "declined",
+            "transaction_id": _extract_transaction_id(authorization),
+            "authorization": authorization,
+            "settlement": None,
+        }
+
+    transaction_id = _extract_transaction_id(authorization)
+    if not transaction_id:
+        # Authorization succeeded but we couldn't find an id to settle against;
+        # surface the raw authorization so the caller can decide what to do.
+        return {
+            "status": "authorized_not_settled",
+            "transaction_id": None,
+            "authorization": authorization,
+            "settlement": None,
+        }
+
+    settlement = settle_transaction(
+        transaction_id=transaction_id,
+        amount=settle_amount,
+        api_key=api_key,
+        timeout=timeout,
+    )
+    return {
+        "status": "settled",
+        "transaction_id": transaction_id,
+        "authorization": authorization,
+        "settlement": settlement,
+    }

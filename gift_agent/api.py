@@ -4,9 +4,13 @@
         Body (all optional):
           {
             "user_profile": { ... gift profile ... },   # defaults to user_profile.json
-            "current_date": "2026-08-08"                 # defaults to today
+            "current_date": "2026-08-08",                # defaults to today
+            "card_id": "a7f2c5b1-..."                    # scoped card to charge
           }
         Returns the selection JSON plus the candidates the search step gathered.
+        When "card_id" is supplied, the select agent also buys the chosen gift by
+        calling the internal purchase_gift tool (authorize + settle in one step)
+        and the response includes the resulting "purchase" envelope.
 
     POST /card/fund
         Body:
@@ -87,12 +91,20 @@ def _default_profile() -> dict[str, Any]:
 class GiftRequest(BaseModel):
     user_profile: Optional[dict[str, Any]] = None
     current_date: Optional[str] = None
+    card_id: Optional[str] = Field(
+        None,
+        description=(
+            "Scoped card id to charge for the selected gift. When provided, the select "
+            "agent authorizes and settles the purchase; when omitted it only selects."
+        ),
+    )
 
 
 class GiftResponse(BaseModel):
     selection: dict[str, Any]
     candidates: list[dict[str, Any]]
     search_calls: list[dict[str, Any]]
+    purchase: Optional[dict[str, Any]] = None
 
 
 class FundCardRequest(BaseModel):
@@ -180,11 +192,12 @@ def choose_gift(request: GiftRequest) -> GiftResponse:
     profile = request.user_profile or _default_profile()
     current_date = request.current_date or date.today().isoformat()
     logger.info(
-        "POST /agent/gift (custom_profile=%s, current_date=%s)",
+        "POST /agent/gift (custom_profile=%s, current_date=%s, card=%s)",
         request.user_profile is not None,
         current_date,
+        request.card_id or "<none>",
     )
-    result = run_agent(profile, current_date)
+    result = run_agent(profile, current_date, request.card_id)
     logger.info(
         "POST /agent/gift done: %d candidate(s) returned",
         len(result.get("search_results", [])),
@@ -193,6 +206,7 @@ def choose_gift(request: GiftRequest) -> GiftResponse:
         selection=result.get("selection", {}),
         candidates=[],
         search_calls=[],
+        purchase=result.get("purchase"),
     )
 
 

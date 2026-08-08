@@ -23,12 +23,20 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, TypedDict
 
+import httpx
 from anthropic import Anthropic
 from dotenv import load_dotenv
 from langgraph.graph import END, START, StateGraph
 
 from . import prompts
-from .tools import SEARCH_TOOL_NAME, run_search_tool, search_tool_schema
+from .tools import (
+    PURCHASE_TOOL_NAME,
+    SEARCH_TOOL_NAME,
+    purchase_tool_schema,
+    run_purchase_tool,
+    run_search_tool,
+    search_tool_schema,
+)
 
 load_dotenv()
 
@@ -53,6 +61,8 @@ MODEL = "claude-haiku-4-5-20251001"
 MAX_TOKENS = 2048
 # Cap the search agent's tool-use loop so a misbehaving model can't spin forever.
 MAX_SEARCH_STEPS = 6
+# Cap the select agent's tool-use loop (select gift -> call purchase_gift -> summarize).
+MAX_SELECT_STEPS = 4
 
 
 @lru_cache(maxsize=1)
@@ -66,11 +76,13 @@ class GiftState(TypedDict, total=False):
     # Inputs
     user_profile: dict[str, Any]
     current_date: str
+    card_id: str
     # Produced by the search node
     search_results: list[dict[str, Any]]
     search_calls: list[dict[str, Any]]
     # Produced by the select node
     selection: dict[str, Any]
+    purchase: dict[str, Any]
 
 
 # --------------------------------------------------------------------------------------
@@ -149,32 +161,127 @@ def search_node(state: GiftState) -> GiftState:
 
 
 def select_node(state: GiftState) -> GiftState:
-    """Run the gift-selection agent over the gathered candidates and parse its JSON."""
+    """Run the gift-selection agent over the gathered candidates.
+
+    The agent picks the single best product and, when a scoped card is available,
+    charges it by calling the ``purchase_gift`` tool (authorize + settle in one
+    step). We capture both the tool call parameters and its result, then parse the
+    agent's final decision JSON.
+    """
     candidates = state.get("search_results", [])
-    logger.info("[select] node started with %d candidate(s)", len(candidates))
+    card_id = state.get("card_id")
+    logger.info(
+        "[select] node started with %d candidate(s) (card_id=%s)",
+        len(candidates),
+        card_id or "<none>",
+    )
     system = prompts.gift_selection_system_prompt(
         state["user_profile"],
         candidates,
         state["current_date"],
+        card_id,
     )
-    response = _client().messages.create(
-        model=MODEL,
-        max_tokens=MAX_TOKENS,
-        system=system,
-        messages=[
-            {
-                "role": "user",
-                "content": "Select the single best gift now. Return only the JSON, no other text.",
-            }
-        ],
-    )
-    text = "".join(block.text for block in response.content if block.type == "text").strip()
-    selection = _parse_json(text)
+    tools = [purchase_tool_schema()]
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "user",
+            "content": (
+                "Select the single best gift now. If it clears every hard constraint and a "
+                "scoped card id was provided, call purchase_gift for it. Then return only the "
+                "decision JSON, no other text."
+            ),
+        }
+    ]
+
+    selection: dict[str, Any] = {}
+    purchase: dict[str, Any] | None = None
+    last_text = ""
+
+    for step in range(MAX_SELECT_STEPS):
+        logger.info("[select] LLM step %d/%d", step + 1, MAX_SELECT_STEPS)
+        response = _client().messages.create(
+            model=MODEL,
+            max_tokens=MAX_TOKENS,
+            system=system,
+            tools=tools,
+            messages=messages,
+        )
+        messages.append({"role": "assistant", "content": response.content})
+
+        text = "".join(
+            block.text for block in response.content if block.type == "text"
+        ).strip()
+        if text:
+            last_text = text
+
+        tool_uses = [block for block in response.content if block.type == "tool_use"]
+        if not tool_uses:
+            logger.info("[select] no more tool calls; stopping loop at step %d", step + 1)
+            break
+
+        tool_results: list[dict[str, Any]] = []
+        for block in tool_uses:
+            if block.name == PURCHASE_TOOL_NAME:
+                logger.info("[select] calling %s with %s", PURCHASE_TOOL_NAME, block.input)
+                payload = _run_purchase(block.input, card_id)
+                purchase = {"input": block.input, "result": payload}
+                logger.info("[select] purchase status=%s", payload.get("status"))
+            else:
+                logger.warning("[select] model requested unknown tool: %s", block.name)
+                payload = {"error": "unknown_tool", "tool": block.name}
+            tool_results.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": json.dumps(payload, ensure_ascii=False),
+                }
+            )
+        messages.append({"role": "user", "content": tool_results})
+
+    if last_text:
+        try:
+            selection = _parse_json(last_text)
+        except json.JSONDecodeError:
+            logger.warning("[select] final text was not valid JSON; returning raw text")
+            selection = {"raw": last_text}
+
     logger.info(
-        "[select] node finished: selected %s",
+        "[select] node finished: selected %s (purchased=%s)",
         selection.get("product_id") or selection.get("id") or selection,
+        bool(purchase),
     )
-    return {"selection": selection}
+    out: GiftState = {"selection": selection}
+    if purchase is not None:
+        out["purchase"] = purchase
+    return out
+
+
+def _run_purchase(tool_input: dict[str, Any], card_id: str | None) -> dict[str, Any]:
+    """Execute the purchase tool defensively, returning an error envelope on failure.
+
+    The card id from the request context is authoritative — we override whatever
+    the model passed so the charge can only ever hit the intended card. If no card
+    is configured we skip the real charge and report it, rather than erroring out.
+    """
+    if not card_id:
+        return {
+            "status": "not_executed",
+            "error": "no_card_configured",
+            "detail": "No scoped card id was provided for this run; purchase skipped.",
+        }
+    resolved_input = {**tool_input, "card_id": card_id}
+    try:
+        return run_purchase_tool(resolved_input)
+    except ValueError as exc:
+        return {"status": "error", "error": "invalid_input", "detail": str(exc)}
+    except httpx.HTTPStatusError as exc:
+        return {
+            "status": "error",
+            "error": "rain_api_error",
+            "detail": f"Rain API returned {exc.response.status_code}: {exc.response.text}",
+        }
+    except httpx.HTTPError as exc:
+        return {"status": "error", "error": "request_failed", "detail": str(exc)}
 
 
 def _parse_json(text: str) -> dict[str, Any]:
@@ -212,12 +319,19 @@ def build_graph():
 def run_agent(
     user_profile: dict[str, Any],
     current_date: str | None = None,
+    card_id: str | None = None,
 ) -> GiftState:
-    """Run the full graph and return the final state (selection + candidates)."""
+    """Run the full graph and return the final state (selection + candidates).
+
+    When ``card_id`` is provided the select agent charges that scoped card for the
+    chosen gift via the ``purchase_gift`` tool; otherwise it selects without buying.
+    """
     state: GiftState = {
         "user_profile": user_profile,
         "current_date": current_date or date.today().isoformat(),
     }
+    if card_id:
+        state["card_id"] = card_id
     logger.info("[graph] run_agent started (current_date=%s)", state["current_date"])
     result = build_graph().invoke(state)
     logger.info(

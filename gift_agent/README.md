@@ -15,7 +15,11 @@ START ──▶ search ──▶ select ──▶ END
   `partner_mock.search.search_products` — the same core used by the HTTP/MCP transports.
 - **`select`** — runs the Gift Selection Agent system prompt
   (`prompts/gift_selection_agent_system_prompt.md`) over those candidates and returns
-  the exact JSON decision specified in that prompt.
+  the exact JSON decision specified in that prompt. When a scoped `card_id` is passed
+  to `run_agent`, the agent also **buys** the chosen gift by calling the internal
+  `purchase_gift` tool, which authorizes and then settles the charge in one step
+  (`gift_agent.cards.purchase_transaction`). The tool call parameters and its result
+  are returned under `purchase`.
 
 ## Setup
 
