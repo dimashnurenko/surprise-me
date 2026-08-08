@@ -267,10 +267,11 @@ def fulfillment_node(state: GiftState) -> GiftState:
     """Persist the completed order's details in the store, keyed by user id.
 
     Reads the order the partner returned from the purchase node's checkout result
-    (``purchase.checkout.order``) and saves it under the user id so it can be looked
-    up later via the HTTP API. If the purchase didn't produce a confirmed order
-    (skipped, error, or no order in the checkout result), it records why and stores
-    nothing.
+    (``purchase.checkout.order``), attaches the gift-selection agent's reasoning as
+    ``notes`` (the context for *why* this gift was chosen), and saves it under the
+    user id so it can be looked up later via the HTTP API. If the purchase didn't
+    produce a confirmed order (skipped, error, or no order in the checkout result),
+    it records why and stores nothing.
     """
     purchase = state.get("purchase") or {}
     order = ((purchase.get("checkout") or {}).get("order")) or {}
@@ -291,6 +292,9 @@ def fulfillment_node(state: GiftState) -> GiftState:
         logger.warning("[fulfillment] USER_ID is not set; cannot store order")
         return {"fulfillment": {"status": "skipped", "reason": "USER_ID is not set"}}
 
+    # Record why this gift was chosen alongside the order. The selection agent's
+    # `reasoning` is written to be shown to the user directly.
+    order = {**order, "notes": _selection_notes(state.get("selection", {}))}
     store.save_order(user_id, order)
     logger.info(
         "[fulfillment] node finished: stored order %s for user %s",
@@ -304,6 +308,11 @@ def fulfillment_node(state: GiftState) -> GiftState:
             "order_id": order.get("order_id"),
         }
     }
+
+
+def _selection_notes(selection: dict[str, Any]) -> str:
+    """The gift-selection agent's plain-language reason for choosing this gift."""
+    return str((selection.get("selected_product") or {}).get("reasoning") or "").strip()
 
 
 def _user_id(state: GiftState) -> str | None:
