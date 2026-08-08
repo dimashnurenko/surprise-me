@@ -10,9 +10,12 @@ START ──▶ search ──▶ select ──▶ purchase ──▶ END
 - **`search`** — runs the Product Search Agent system prompt
   (`prompts/search_agent_system_prompt.md`) with a `search_products` tool. The model
   maps the user's gift profile onto catalog filters and calls the tool (possibly
-  several times); we collect the de-duplicated candidate products. The tool schema is
-  derived from `partner_mock.models.SearchParams` and execution delegates to
-  `partner_mock.search.search_products` — the same core used by the HTTP/MCP transports.
+  several times); we collect the de-duplicated candidate products. The partner is
+  treated as a **black-box third party**: we don't import its code. The tool schema is
+  **discovered at runtime** from the partner's MCP server (`tools/list`) and cached, and
+  execution goes through the same MCP server (`tools/call`). Configurable via
+  `PARTNER_MCP_URL` (default `http://127.0.0.1:8000/mcp`), so the partner server
+  (`python -m partner_mock.server`) must be running for the search step.
 - **`select`** — runs the Gift Selection Agent system prompt
   (`prompts/gift_selection_agent_system_prompt.md`) over those candidates and returns
   the exact JSON decision specified in that prompt. This agent does not call tools.
