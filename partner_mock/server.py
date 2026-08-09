@@ -254,12 +254,46 @@ async def http_health(request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
+def _transport_security():
+    """Build the MCP Streamable-HTTP DNS-rebinding policy.
+
+    mcp >= 2.0 enables DNS-rebinding protection with an *empty* allow-list by
+    default, which rejects every request with ``421 Misdirected Request`` (incl.
+    the compose-network host ``partner_mock:8000``). This mock is meant to run on
+    a trusted local/compose network, so we relax it here:
+
+    * ``MCP_ALLOWED_HOSTS`` (comma-separated) — if set, enable protection and only
+      allow those Host values. Entries support the SDK's ``host:*`` port wildcard.
+    * unset — disable DNS-rebinding protection entirely (default for the mock).
+    """
+    try:
+        from mcp.server.transport_security import TransportSecuritySettings
+    except ImportError:  # mcp 1.x has no such knob
+        return None
+
+    raw = os.environ.get("MCP_ALLOWED_HOSTS", "").strip()
+    if not raw:
+        return TransportSecuritySettings(enable_dns_rebinding_protection=False)
+
+    hosts = [h.strip() for h in raw.split(",") if h.strip()]
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=hosts,
+    )
+
+
 def main() -> None:
     import uvicorn
 
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "8000"))
-    uvicorn.run(mcp.streamable_http_app(), host=host, port=port)
+
+    security = _transport_security()
+    try:
+        app = mcp.streamable_http_app(transport_security=security)
+    except TypeError:  # mcp 1.x streamable_http_app() takes no kwargs
+        app = mcp.streamable_http_app()
+    uvicorn.run(app, host=host, port=port)
 
 
 if __name__ == "__main__":
