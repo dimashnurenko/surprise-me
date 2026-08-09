@@ -105,6 +105,14 @@
     white-space: pre-wrap; word-break: break-word;
   }
   pre.expected { color: var(--muted); }
+  pre .tok-key { color: #7c9cff; }
+  pre .tok-str { color: #3ecf8e; }
+  pre .tok-num { color: #d9a441; }
+  pre .tok-bool { color: #c792ea; }
+  pre .tok-null { color: #ef5f6b; }
+  pre .tok-punc { color: #6b7280; }
+  pre.expected .tok-key, pre.expected .tok-str, pre.expected .tok-num,
+  pre.expected .tok-bool, pre.expected .tok-null { opacity: .7; }
   .match { font-size: 12px; margin-top: 8px; display: flex; align-items: center; gap: 6px; }
   .match.ok { color: var(--ok); }
   .match.fail { color: var(--fail); }
@@ -329,9 +337,27 @@ function render() {
 
 function fmt(v) {
   if (typeof v === "string") return escapeHtml(v);
-  return escapeHtml(JSON.stringify(v, null, 2));
+  return highlightJson(JSON.stringify(v, null, 2));
 }
 function escapeHtml(s) { return String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+
+// Colorize a pretty-printed JSON string by wrapping tokens in <span> classes.
+function highlightJson(json) {
+  const esc = escapeHtml(json);
+  return esc.replace(
+    /("(\\.|[^"\\])*"(\s*:)?)|\b(true|false)\b|\bnull\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
+    (m) => {
+      if (/^"/.test(m)) {
+        return /:\s*$/.test(m)
+          ? '<span class="tok-key">' + m.replace(/(\s*:)$/, '</span><span class="tok-punc">$1</span>')
+          : '<span class="tok-str">' + m + "</span>";
+      }
+      if (m === "true" || m === "false") return '<span class="tok-bool">' + m + "</span>";
+      if (m === "null") return '<span class="tok-null">' + m + "</span>";
+      return '<span class="tok-num">' + m + "</span>";
+    }
+  );
+}
 
 async function runStep(id) {
   const step = STEPS.find(s => s.id === id);
