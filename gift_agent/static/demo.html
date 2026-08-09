@@ -133,6 +133,24 @@
   }
   footer { text-align: center; color: var(--muted); font-size: 12px; padding: 16px; }
   .hint { font-size: 12px; color: var(--muted); }
+
+  /* Per-step "under the hood" explainer */
+  .detail {
+    background: var(--panel-2); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 8px; padding: 11px 14px; margin-bottom: 14px; font-size: 12.5px; color: var(--muted);
+    line-height: 1.55;
+  }
+  .detail .d-title {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--accent);
+    font-weight: 700; margin-bottom: 6px;
+  }
+  .detail b { color: var(--text); font-weight: 600; }
+  .detail code {
+    font-family: var(--mono); font-size: 11px; background: var(--bg);
+    border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; color: var(--text);
+  }
+  .detail ol { margin: 8px 0 0; padding-left: 18px; }
+  .detail ol li { margin-bottom: 4px; }
 </style>
 </head>
 <body>
@@ -172,6 +190,10 @@ const STEPS = [
     id: 0,
     action: "Check user state — starting budget cap",
     method: "GET /profile",
+    detail: `Reads the user's stored gift profile from the per-user store (keyed by <code>USER_ID</code>),
+      falling back to the seed <code>user_profile.json</code> if nothing is stored yet. The field that
+      matters here is <b><code>budget.per_gift_max_usd</code></b> — the ceiling the agent may spend on a
+      single gift. It starts at <b>$20</b>, which will constrain the first agent run.`,
     expected: { "budget.per_gift_max_usd": 20 },
     run: async (api) => {
       const r = await jfetch(api + "/profile");
@@ -189,6 +211,8 @@ const STEPS = [
     id: 1,
     action: "Clear orders",
     method: "DELETE /orders",
+    detail: `Wipes the in-memory order store so the demo starts from a clean slate. This is just demo
+      housekeeping — it lets us assert “exactly 1 order after run 1, exactly 2 after run 2.”`,
     expected: { status: "cleared" },
     run: async (api) => {
       const r = await jfetch(api + "/orders", { method: "DELETE" });
@@ -199,6 +223,17 @@ const STEPS = [
     id: 2,
     action: "Call gift agent — 1st run ($20 cap)",
     method: "POST /agent/gift",
+    detail: `Kicks off the full <b>LangGraph pipeline</b>. One HTTP call, four internal stages:
+      <ol>
+        <li><b>search</b> — Claude maps the profile to catalog filters and calls the partner's
+          <code>search_products</code> tool over <b>MCP</b> (looping up to a few times) to collect candidates.</li>
+        <li><b>select</b> — Claude picks the single best gift as JSON, staying under the <b>$20</b> cap.</li>
+        <li><b>purchase</b> — we issue a <b>scoped virtual card</b> sized to the gift &amp; locked to its
+          merchant category; the partner authorizes and settles the charge.</li>
+        <li><b>fulfillment</b> — the confirmed order + reasoning is persisted for the user.</li>
+      </ol>
+      The endpoint returns only the overall outcome: <code>{ status: "fulfilled" }</code>.
+      Because the $20 cap is tight, the agent picks an inexpensive gift here.`,
     expected: { status: "fulfilled" },
     run: async (api) => {
       const r = await jfetch(api + "/agent/gift", { method: "POST", body: {} });
@@ -209,6 +244,9 @@ const STEPS = [
     id: 3,
     action: "Check orders",
     method: "GET /orders",
+    detail: `Reads back what the fulfillment stage persisted. We expect exactly <b>1 order</b> — the gift
+      the first run bought under the $20 cap. Each order carries the product, price, and the agent's
+      plain-language reasoning for choosing it.`,
     expected: "1 order",
     run: async (api) => {
       const r = await jfetch(api + "/orders");
@@ -220,6 +258,11 @@ const STEPS = [
     id: 4,
     action: "Update profile — raise cap",
     method: "PUT /profile",
+    detail: `Reads the current profile, bumps <b><code>budget.per_gift_max_usd</code></b> to the new cap
+      (and raises the monthly cap to match), then writes the whole document back with
+      <code>PUT /profile</code>. The agent always re-reads the profile from the store at the start of a
+      run, so this edit takes effect immediately — <b>no restart, no redeploy</b>. This is the change
+      the demo is built to prove.`,
     expected: (ctx) => ({ "budget.per_gift_max_usd": ctx.cap }),
     run: async (api, ctx) => {
       // Read current effective profile, bump the cap, write it back.
@@ -237,6 +280,10 @@ const STEPS = [
     id: 5,
     action: "Call gift agent — 2nd run ($50 cap)",
     method: "POST /agent/gift",
+    detail: `Runs the exact same <code>search → select → purchase → fulfillment</code> pipeline — but now
+      the profile allows up to <b>$50</b> per gift. With more headroom, the <b>select</b> stage can
+      consider pricier options the first run had to skip, so the agent typically buys a
+      <b>different</b> gift. Same code, different budget → different outcome.`,
     expected: { status: "fulfilled" },
     run: async (api) => {
       const r = await jfetch(api + "/agent/gift", { method: "POST", body: {} });
@@ -247,6 +294,9 @@ const STEPS = [
     id: 6,
     action: "Check orders",
     method: "GET /orders",
+    detail: `Final proof. The store should now hold <b>2 distinct orders</b> — one from each run. Two
+      different gifts from identical agent calls means the <b>only</b> thing that changed the outcome
+      was the profile edit in step 4. That's the whole point: behavior is driven by data, not code.`,
     expected: "2 orders (different items)",
     run: async (api) => {
       const r = await jfetch(api + "/orders");
@@ -308,6 +358,7 @@ function render() {
         <button class="step-run" data-run="${step.id}">Run</button>
       </div>
       <div class="step-body">
+        ${step.detail ? `<div class="detail"><div class="d-title">What happens under the hood</div>${step.detail}</div>` : ""}
         <div class="grid2">
           <div>
             <div class="label">Expected</div>
