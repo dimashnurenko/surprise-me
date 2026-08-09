@@ -17,6 +17,17 @@
         environment variable). Orders are persisted by the graph's fulfillment node
         in an in-memory store, so this reflects orders placed since the server started.
 
+    GET /profile
+        Returns the profile for the current user (hardcoded to the USER_ID
+        environment variable): the profile stored via PUT /profile if present,
+        otherwise the default from user_profile.json.
+
+    PUT /profile
+        Body:
+          { "profile": { ... full user profile ... } }  # overwrites stored profile
+        Overwrites the stored profile for the current user. Subsequent
+        POST /agent/gift runs use this profile, so edits change the results.
+
     POST /card/fund
         Body:
           { "amount": 100000 }                          # funding amount, required
@@ -58,18 +69,16 @@ Run with:  python -m gift_agent.api   (or: uvicorn gift_agent.api:app)
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from datetime import date
-from pathlib import Path
 from typing import Any, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from . import cards, store
+from . import cards, profile_store, store
 from .graph import run_agent
 
 logger = logging.getLogger("gift_agent.api")
@@ -80,17 +89,11 @@ _FUND_URL = os.environ.get(
 )
 _FUND_CURRENCY = "rusd"
 
-_DEFAULT_PROFILE_PATH = Path(__file__).resolve().parent.parent / "user_profile.json"
-
 app = FastAPI(
     title="Surprise Me — Gift Selection Agent",
     description="LangGraph agent (search -> select) exposed over HTTP.",
     version="0.1.0",
 )
-
-
-def _default_profile() -> dict[str, Any]:
-    return json.loads(_DEFAULT_PROFILE_PATH.read_text(encoding="utf-8"))
 
 
 class GiftRequest(BaseModel):
@@ -111,6 +114,22 @@ class OrdersResponse(BaseModel):
 
 class ClearOrdersResponse(BaseModel):
     status: str
+
+
+class ProfileResponse(BaseModel):
+    user_id: str
+    # "stored" if the profile came from the in-memory store, "default" if it fell
+    # back to user_profile.json (nothing stored for this user yet).
+    source: str
+    profile: dict[str, Any]
+
+
+class UpdateProfileRequest(BaseModel):
+    # The full profile to store. This overwrites any previously stored profile
+    # for the user, so send the complete document (not a partial patch).
+    profile: dict[str, Any] = Field(
+        ..., description="The complete user profile to store (overwrites the existing one)."
+    )
 
 
 class FundCardRequest(BaseModel):
@@ -198,15 +217,27 @@ def choose_gift(request: GiftRequest) -> GiftResponse:
 
     Returns only the overall outcome: ``"fulfilled"`` when the order was placed
     and persisted by the fulfillment node, ``"failed"`` otherwise.
+
+    The agent always reads the user profile from the store (keyed by ``USER_ID``,
+    falling back to ``user_profile.json``). If a ``user_profile`` is supplied in
+    the request body it is first saved to the store — keeping the database the
+    single source of truth the graph reads from.
     """
-    profile = request.user_profile or _default_profile()
     current_date = request.current_date or date.today().isoformat()
+    if request.user_profile is not None:
+        user_id = os.environ.get("USER_ID")
+        if not user_id:
+            raise HTTPException(
+                status_code=500,
+                detail="USER_ID is not set; cannot store the supplied user_profile.",
+            )
+        profile_store.save_profile(user_id, request.user_profile)
     logger.info(
         "POST /agent/gift (custom_profile=%s, current_date=%s)",
         request.user_profile is not None,
         current_date,
     )
-    result = run_agent(profile, current_date)
+    result = run_agent(current_date)
     fulfilled = (result.get("fulfillment") or {}).get("status") == "stored"
     status = "fulfilled" if fulfilled else "failed"
     logger.info("POST /agent/gift done: status=%s", status)
@@ -234,6 +265,40 @@ def clear_orders() -> ClearOrdersResponse:
     store.clear()
     logger.info("DELETE /orders: cleared all orders")
     return ClearOrdersResponse(status="cleared")
+
+
+@app.get("/profile", response_model=ProfileResponse)
+def get_profile() -> ProfileResponse:
+    """Return the profile for the current user.
+
+    The user is hardcoded to the ``USER_ID`` environment variable. Returns the
+    profile stored via ``PUT /profile`` (``source: "stored"``) if present,
+    otherwise falls back to ``user_profile.json`` (``source: "default"``).
+    """
+    user_id = os.environ.get("USER_ID")
+    if not user_id:
+        raise HTTPException(status_code=500, detail="USER_ID is not set.")
+    stored = profile_store.get_profile(user_id)
+    source = "stored" if stored is not None else "default"
+    profile = stored if stored is not None else profile_store.default_profile()
+    logger.info("GET /profile (user_id=%s): source=%s", user_id, source)
+    return ProfileResponse(user_id=user_id, source=source, profile=profile)
+
+
+@app.put("/profile", response_model=ProfileResponse)
+def update_profile(request: UpdateProfileRequest) -> ProfileResponse:
+    """Overwrite the profile for the current user.
+
+    The user is hardcoded to the ``USER_ID`` environment variable. The stored
+    profile fully replaces any previous one and is used by subsequent
+    ``POST /agent/gift`` runs, so profile edits change the agent's results.
+    """
+    user_id = os.environ.get("USER_ID")
+    if not user_id:
+        raise HTTPException(status_code=500, detail="USER_ID is not set.")
+    profile_store.save_profile(user_id, request.profile)
+    logger.info("PUT /profile (user_id=%s): stored profile", user_id)
+    return ProfileResponse(user_id=user_id, source="stored", profile=request.profile)
 
 
 @app.post("/card/fund", response_model=FundCardResponse)
