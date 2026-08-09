@@ -1,0 +1,14 @@
+.git
+.gitignore
+.context
+.env
+bruno
+**/__pycache__
+**/*.pyc
+*.egg-info
+.venv
+venv
+.pytest_cache
+.DS_Store
+Dockerfile
+docker-compose.yml

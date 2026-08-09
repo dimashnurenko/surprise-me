@@ -1,0 +1,49 @@
+services:
+  partner_mock:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: surprise-me/app
+    command: python -m partner_mock.server
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8000"
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  gift_agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Reuse the image built by the partner_mock service (same codebase/deps).
+    image: surprise-me/app
+    command: python -m gift_agent.api
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      AGENT_PORT: "8010"
+      # Reach the partner over the compose network instead of localhost.
+      PARTNER_MCP_URL: http://partner_mock:8000/mcp
+      PARTNER_CHECKOUT_URL: http://partner_mock:8000/api/checkout
+    ports:
+      - "8010:8010"
+    depends_on:
+      partner_mock:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
