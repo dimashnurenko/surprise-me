@@ -76,6 +76,7 @@ from typing import Any, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from . import cards, profile_store, store
@@ -204,6 +205,15 @@ class SettleTransactionRequest(BaseModel):
 
 class SettleTransactionResponse(BaseModel):
     result: dict[str, Any]
+
+
+_DEMO_PAGE = os.path.join(os.path.dirname(__file__), "static", "demo.html")
+
+
+@app.get("/", include_in_schema=False)
+def demo_page() -> FileResponse:
+    """Serve the interactive demo page (same-origin, so no CORS needed)."""
+    return FileResponse(_DEMO_PAGE, media_type="text/html")
 
 
 @app.get("/healthz")

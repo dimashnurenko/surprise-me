@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Surprise Me — Gift Agent Demo</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #171a23;
+    --panel-2: #1e222d;
+    --border: #2a2f3d;
+    --text: #e6e8ee;
+    --muted: #8b91a3;
+    --accent: #7c9cff;
+    --accent-2: #5b7cff;
+    --ok: #3ecf8e;
+    --pending: #d9a441;
+    --fail: #ef5f6b;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+  header {
+    padding: 28px 32px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  header h1 { margin: 0; font-size: 20px; letter-spacing: -0.01em; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  .toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .base-url {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 10px; font-size: 12px; color: var(--muted);
+  }
+  .base-url input {
+    background: transparent; border: none; color: var(--text);
+    font-family: var(--mono); font-size: 12px; width: 190px; outline: none;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); }
+  .dot.fail { background: var(--fail); }
+  button {
+    font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--panel-2); color: var(--text); padding: 9px 14px; font-size: 13px;
+    transition: background .15s, border-color .15s, opacity .15s;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.primary { background: var(--accent-2); border-color: var(--accent-2); color: #fff; font-weight: 600; }
+  button.primary:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); }
+  button.ghost { background: transparent; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 32px 80px; }
+  .run-bar { display: flex; gap: 10px; align-items: center; margin-bottom: 24px; flex-wrap: wrap; }
+  .run-bar .spacer { flex: 1; }
+  .steps { display: flex; flex-direction: column; gap: 12px; }
+  .step {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    overflow: hidden;
+  }
+  .step-head {
+    display: flex; align-items: center; gap: 14px; padding: 14px 16px; cursor: pointer;
+  }
+  .num {
+    flex: none; width: 30px; height: 30px; border-radius: 8px;
+    display: grid; place-items: center; font-size: 13px; font-weight: 700;
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--muted);
+  }
+  .step.ok .num { background: rgba(62,207,142,.12); border-color: var(--ok); color: var(--ok); }
+  .step.fail .num { background: rgba(239,95,107,.12); border-color: var(--fail); color: var(--fail); }
+  .step.running .num { background: rgba(124,156,255,.14); border-color: var(--accent); color: var(--accent); }
+  .step-title { flex: 1; min-width: 0; }
+  .step-title .action { font-weight: 600; font-size: 14px; }
+  .step-title .method {
+    font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 2px;
+  }
+  .status-badge {
+    flex: none; font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 20px;
+    background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  .status-badge.ok { background: rgba(62,207,142,.12); color: var(--ok); border-color: transparent; }
+  .status-badge.fail { background: rgba(239,95,107,.12); color: var(--fail); border-color: transparent; }
+  .status-badge.running { background: rgba(124,156,255,.14); color: var(--accent); border-color: transparent; }
+  .step-run { flex: none; }
+  .step-body { padding: 0 16px 16px 60px; display: none; }
+  .step.open .step-body { display: block; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+  .label { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 6px; }
+  pre {
+    margin: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px; font-family: var(--mono); font-size: 12px; overflow: auto; max-height: 320px;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  pre.expected { color: var(--muted); }
+  pre .tok-key { color: #7c9cff; }
+  pre .tok-str { color: #3ecf8e; }
+  pre .tok-num { color: #d9a441; }
+  pre .tok-bool { color: #c792ea; }
+  pre .tok-null { color: #ef5f6b; }
+  pre .tok-punc { color: #6b7280; }
+  pre.expected .tok-key, pre.expected .tok-str, pre.expected .tok-num,
+  pre.expected .tok-bool, pre.expected .tok-null { opacity: .7; }
+  .match { font-size: 12px; margin-top: 8px; display: flex; align-items: center; gap: 6px; }
+  .match.ok { color: var(--ok); }
+  .match.fail { color: var(--fail); }
+  .meta { font-size: 12px; color: var(--muted); margin-top: 8px; font-family: var(--mono); }
+  .highlight {
+    margin-top: 12px; display: inline-flex; align-items: center; gap: 12px;
+    background: rgba(217,164,65,.10); border: 1px solid var(--pending); border-radius: 10px;
+    padding: 10px 16px;
+  }
+  .highlight.ok { background: rgba(62,207,142,.10); border-color: var(--ok); }
+  .highlight .hl-label { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .highlight .hl-value { font-size: 22px; font-weight: 700; font-family: var(--mono); color: var(--pending); }
+  .highlight.ok .hl-value { color: var(--ok); }
+  .cap-input { width: 70px; }
+  input[type=number] {
+    font: inherit; background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 4px 8px; font-family: var(--mono);
+  }
+  footer { text-align: center; color: var(--muted); font-size: 12px; padding: 16px; }
+  .hint { font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>🎁 Surprise Me — Gift Agent Demo</h1>
+    <p>Walkthrough: check user state ($20 cap) → clear orders → run agent ($20) → raise cap → run agent ($50) → verify two orders.</p>
+  </div>
+  <div class="toolbar">
+    <div class="base-url">
+      <span>API</span>
+      <input id="baseUrl" value="" spellcheck="false" />
+      <span class="dot" id="healthDot" title="health"></span>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="run-bar">
+    <button class="primary" id="runAll">▶ Run full demo</button>
+    <button class="ghost" id="resetAll">↺ Reset</button>
+    <div class="spacer"></div>
+    <span class="hint">Cap step 4 raises to $<span id="capLabel">50</span> — <input type="number" id="capInput" class="cap-input" value="50" min="1" /></span>
+  </div>
+
+  <div class="steps" id="steps"></div>
+</main>
+
+<footer>Served by the gift agent at <code id="footUrl"></code> · same-origin, no CORS needed</footer>
+
+<script>
+const $ = (s, r=document) => r.querySelector(s);
+
+// Steps definition. `run` returns { actual, ok, meta } given ctx.
+const STEPS = [
+  {
+    id: 0,
+    action: "Check user state — starting budget cap",
+    method: "GET /profile",
+    expected: { "budget.per_gift_max_usd": 20 },
+    run: async (api) => {
+      const r = await jfetch(api + "/profile");
+      const cap = r.profile?.budget?.per_gift_max_usd;
+      const name = [r.profile?.user?.first_name, r.profile?.user?.last_name].filter(Boolean).join(" ");
+      return {
+        actual: r,
+        ok: cap === 20,
+        meta: `user: ${name || "?"} · source: ${r.source} · starting per-gift cap: $${cap} (expected $20)`,
+        highlight: { label: "Starting budget limit", value: `$${cap}`, ok: cap === 20 },
+      };
+    },
+  },
+  {
+    id: 1,
+    action: "Clear orders",
+    method: "DELETE /orders",
+    expected: { status: "cleared" },
+    run: async (api) => {
+      const r = await jfetch(api + "/orders", { method: "DELETE" });
+      return { actual: r, ok: r.status === "cleared" };
+    },
+  },
+  {
+    id: 2,
+    action: "Call gift agent — 1st run ($20 cap)",
+    method: "POST /agent/gift",
+    expected: { status: "fulfilled" },
+    run: async (api) => {
+      const r = await jfetch(api + "/agent/gift", { method: "POST", body: {} });
+      return { actual: r, ok: r.status === "fulfilled" };
+    },
+  },
+  {
+    id: 3,
+    action: "Check orders",
+    method: "GET /orders",
+    expected: "1 order",
+    run: async (api) => {
+      const r = await jfetch(api + "/orders");
+      const n = (r.orders || []).length;
+      return { actual: r, ok: n === 1, meta: `${n} order(s)` };
+    },
+  },
+  {
+    id: 4,
+    action: "Update profile — raise cap",
+    method: "PUT /profile",
+    expected: (ctx) => ({ "budget.per_gift_max_usd": ctx.cap }),
+    run: async (api, ctx) => {
+      // Read current effective profile, bump the cap, write it back.
+      const cur = await jfetch(api + "/profile");
+      const profile = cur.profile || {};
+      profile.budget = profile.budget || {};
+      profile.budget.per_gift_max_usd = ctx.cap;
+      profile.budget.monthly_cap_usd = Math.max(profile.budget.monthly_cap_usd || 0, ctx.cap);
+      const r = await jfetch(api + "/profile", { method: "PUT", body: { profile } });
+      const echoed = r.profile?.budget?.per_gift_max_usd;
+      return { actual: r, ok: echoed === ctx.cap, meta: `per_gift_max_usd echoed: ${echoed}` };
+    },
+  },
+  {
+    id: 5,
+    action: "Call gift agent — 2nd run ($50 cap)",
+    method: "POST /agent/gift",
+    expected: { status: "fulfilled" },
+    run: async (api) => {
+      const r = await jfetch(api + "/agent/gift", { method: "POST", body: {} });
+      return { actual: r, ok: r.status === "fulfilled" };
+    },
+  },
+  {
+    id: 6,
+    action: "Check orders",
+    method: "GET /orders",
+    expected: "2 orders (different items)",
+    run: async (api) => {
+      const r = await jfetch(api + "/orders");
+      const orders = r.orders || [];
+      const n = orders.length;
+      const ids = orders.map(o => o.order_id);
+      const distinct = new Set(ids).size === n;
+      return { actual: r, ok: n === 2 && distinct, meta: `${n} order(s), ${new Set(ids).size} distinct` };
+    },
+  },
+];
+
+async function jfetch(url, opts = {}) {
+  const init = { method: opts.method || "GET", headers: {} };
+  if (opts.body !== undefined) {
+    init.headers["Content-Type"] = "application/json";
+    init.body = JSON.stringify(opts.body);
+  }
+  const res = await fetch(url, init);
+  const text = await res.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = text; }
+  if (!res.ok) {
+    const err = new Error(`HTTP ${res.status}`);
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
+function api() { return $("#baseUrl").value.replace(/\/+$/, ""); }
+
+const state = {}; // id -> { status, actual, ok, meta }
+
+function render() {
+  const cap = Number($("#capInput").value) || 50;
+  const host = $("#steps");
+  host.innerHTML = "";
+  for (const step of STEPS) {
+    const s = state[step.id] || { status: "idle" };
+    const el = document.createElement("div");
+    el.className = "step " + (s.status === "running" ? "running open" : s.ok === true ? "ok" : s.ok === false && s.status === "done" ? "fail" : "");
+    if (s.open) el.classList.add("open");
+
+    const expected = typeof step.expected === "function" ? step.expected({ cap }) : step.expected;
+    const badge = s.status === "running" ? '<span class="status-badge running">running</span>'
+      : s.status === "done" && s.ok ? '<span class="status-badge ok">pass</span>'
+      : s.status === "done" ? '<span class="status-badge fail">fail</span>'
+      : '<span class="status-badge">idle</span>';
+
+    el.innerHTML = `
+      <div class="step-head" data-toggle="${step.id}">
+        <div class="num">${step.id}</div>
+        <div class="step-title">
+          <div class="action">${step.action}</div>
+          <div class="method">${step.method}</div>
+        </div>
+        ${badge}
+        <button class="step-run" data-run="${step.id}">Run</button>
+      </div>
+      <div class="step-body">
+        <div class="grid2">
+          <div>
+            <div class="label">Expected</div>
+            <pre class="expected">${fmt(expected)}</pre>
+          </div>
+          <div>
+            <div class="label">Actual</div>
+            <pre>${s.actual !== undefined ? fmt(s.actual) : "—"}</pre>
+          </div>
+        </div>
+        ${s.highlight ? `<div class="highlight ${s.highlight.ok ? "ok" : ""}"><span class="hl-label">${escapeHtml(s.highlight.label)}</span><span class="hl-value">${escapeHtml(s.highlight.value)}</span></div>` : ""}
+        ${s.meta ? `<div class="meta">${escapeHtml(s.meta)}</div>` : ""}
+        ${s.status === "done" ? `<div class="match ${s.ok ? "ok" : "fail"}">${s.ok ? "✓ matches expected result" : "✗ does not match expected result"}</div>` : ""}
+      </div>`;
+    host.appendChild(el);
+  }
+
+  host.querySelectorAll("[data-toggle]").forEach(n => n.addEventListener("click", (e) => {
+    if (e.target.closest("[data-run]")) return;
+    const id = +n.dataset.toggle;
+    state[id] = state[id] || { status: "idle" };
+    state[id].open = !state[id].open;
+    render();
+  }));
+  host.querySelectorAll("[data-run]").forEach(n => n.addEventListener("click", () => runStep(+n.dataset.run)));
+}
+
+function fmt(v) {
+  if (typeof v === "string") return escapeHtml(v);
+  return highlightJson(JSON.stringify(v, null, 2));
+}
+function escapeHtml(s) { return String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+
+// Colorize a pretty-printed JSON string by wrapping tokens in <span> classes.
+function highlightJson(json) {
+  const esc = escapeHtml(json);
+  return esc.replace(
+    /("(\\.|[^"\\])*"(\s*:)?)|\b(true|false)\b|\bnull\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
+    (m) => {
+      if (/^"/.test(m)) {
+        return /:\s*$/.test(m)
+          ? '<span class="tok-key">' + m.replace(/(\s*:)$/, '</span><span class="tok-punc">$1</span>')
+          : '<span class="tok-str">' + m + "</span>";
+      }
+      if (m === "true" || m === "false") return '<span class="tok-bool">' + m + "</span>";
+      if (m === "null") return '<span class="tok-null">' + m + "</span>";
+      return '<span class="tok-num">' + m + "</span>";
+    }
+  );
+}
+
+async function runStep(id) {
+  const step = STEPS.find(s => s.id === id);
+  const cap = Number($("#capInput").value) || 50;
+  state[id] = { status: "running", open: true };
+  render();
+  try {
+    const res = await step.run(api(), { cap });
+    state[id] = { status: "done", ok: res.ok, actual: res.actual, meta: res.meta, highlight: res.highlight, open: true };
+  } catch (err) {
+    state[id] = { status: "done", ok: false, actual: err.data ?? err.message, meta: "request failed", open: true };
+  }
+  render();
+  return state[id].ok;
+}
+
+async function runAll() {
+  $("#runAll").disabled = true;
+  for (const step of STEPS) {
+    // collapse others for focus
+    const ok = await runStep(step.id);
+    if (!ok) break;
+  }
+  $("#runAll").disabled = false;
+}
+
+function reset() {
+  for (const k of Object.keys(state)) delete state[k];
+  render();
+}
+
+async function checkHealth() {
+  const dot = $("#healthDot");
+  try {
+    const r = await jfetch(api() + "/healthz");
+    dot.className = "dot " + (r.status === "ok" ? "ok" : "fail");
+    dot.title = "healthy";
+  } catch {
+    dot.className = "dot fail";
+    dot.title = "unreachable";
+  }
+}
+
+// init
+$("#baseUrl").value = location.origin.startsWith("http") ? location.origin : "http://localhost:8010";
+$("#footUrl").textContent = $("#baseUrl").value;
+$("#runAll").addEventListener("click", runAll);
+$("#resetAll").addEventListener("click", reset);
+$("#capInput").addEventListener("input", () => { $("#capLabel").textContent = $("#capInput").value; render(); });
+$("#baseUrl").addEventListener("change", () => { $("#footUrl").textContent = api(); checkHealth(); });
+render();
+checkHealth();
+setInterval(checkHealth, 8000);
+</script>
+</body>
+</html>
